@@ -15,4 +15,12 @@ She wants to help. She is sincerely trying to remember.
 You have a finite amount of her time. She will not stay forever.
 
 Ask carefully. Memory is not a recording.`,
+	Topics: []kase.Topic{
+		{Name: "the car", InitiallyVisible: true},
+		{Name: "the second person", InitiallyVisible: true},
+		{Name: "the streetlight", InitiallyVisible: true},
+		{Name: "the bag", InitiallyVisible: true},
+		{Name: "the time", InitiallyVisible: true},
+		{Name: "the limp", InitiallyVisible: true},
+	},
 }

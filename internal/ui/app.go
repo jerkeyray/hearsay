@@ -11,15 +11,17 @@ type screen int
 const (
 	screenSplash screen = iota
 	screenBriefing
+	screenInterrogation
 	screenPlaceholder
 )
 
 type model struct {
-	screen      screen
-	splash      splashModel
-	briefing    briefingModel
-	placeholder string
-	quitting    bool
+	screen        screen
+	splash        splashModel
+	briefing      briefingModel
+	interrogation interrogationModel
+	placeholder   string
+	quitting      bool
 }
 
 func New() tea.Model {
@@ -57,8 +59,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if advance {
-			m.screen = screenPlaceholder
-			m.placeholder = "interrogation — three-pane layout lands here next step"
+			m.interrogation = newInterrogation(streetlight.Case)
+			m.screen = screenInterrogation
+			return m, nil
+		}
+		return m, cmd
+
+	case screenInterrogation:
+		next, cmd, back := m.interrogation.Update(msg)
+		m.interrogation = next
+		if back {
+			m.screen = screenSplash
 			return m, nil
 		}
 		return m, cmd
@@ -84,6 +95,8 @@ func (m model) View() string {
 		return m.splash.View()
 	case screenBriefing:
 		return m.briefing.View()
+	case screenInterrogation:
+		return m.interrogation.View()
 	case screenPlaceholder:
 		return styleBorder.Render(m.placeholder + "\n\n" + styleDim.Render("esc back · q quit"))
 	}
