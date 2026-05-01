@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -108,59 +107,27 @@ func (p *LiveProvider) NewDriver(savePath string, c kase.Case) (*LiveDriver, err
 	return newLiveDriver(p.Provider, p.Model, p.Budget, log, c.Beliefs, savePath, p), nil
 }
 
-// Branch copies the underlying SQLite log (and any WAL/SHM
-// sidecars) to dstPath, opens it, and returns a sibling LiveDriver
-// that writes future runs into the copy. The original driver is
-// unaffected.
-func (d *LiveDriver) Branch(dstPath string) (Driver, error) {
+// Branch forks the underlying SQLite log to dstPath using
+// eventlog.ForkSQLite (VACUUM INTO, WAL-safe), opens it, and
+// returns a sibling LiveDriver that writes future runs into the
+// copy. The original driver is unaffected. anchorRunID names a run
+// that exists in the source — typically the most recent ask's
+// RunID — to satisfy ForkSQLite's run-presence assertion.
+func (d *LiveDriver) Branch(dstPath, anchorRunID string) (Driver, error) {
 	if d.savePath == "" || d.owner == nil {
 		return nil, fmt.Errorf("branch: live driver has no save path (in-memory log?)")
 	}
-	if err := copySQLite(d.savePath, dstPath); err != nil {
-		return nil, fmt.Errorf("branch: copy save: %w", err)
+	if anchorRunID == "" {
+		return nil, fmt.Errorf("branch: anchor run id required (no asks yet?)")
+	}
+	if err := eventlog.ForkSQLite(context.Background(), d.savePath, dstPath, anchorRunID, 0); err != nil {
+		return nil, fmt.Errorf("branch: fork save: %w", err)
 	}
 	log, err := eventlog.NewSQLite(dstPath)
 	if err != nil {
 		return nil, fmt.Errorf("branch: open copy: %w", err)
 	}
 	return newLiveDriver(d.owner.Provider, d.owner.Model, d.owner.Budget, log, d.beliefs, dstPath, d.owner), nil
-}
-
-// copySQLite copies a SQLite database file plus its -wal and -shm
-// sidecars (if present) to a parallel destination. WAL mode means
-// recent writes may live entirely in the .db-wal file until a
-// checkpoint, so a naive single-file copy can miss them.
-func copySQLite(src, dst string) error {
-	if err := copyOne(src, dst); err != nil {
-		return err
-	}
-	for _, suffix := range []string{"-wal", "-shm"} {
-		s := src + suffix
-		if _, err := os.Stat(s); err != nil {
-			continue
-		}
-		if err := copyOne(s, dst+suffix); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func copyOne(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
-	}
-	return out.Close()
 }
 
 // LiveDriver runs a starling.Agent per ask against a real (or scripted)
@@ -248,6 +215,7 @@ func (d *LiveDriver) Respond(ctx context.Context, topic string, technique kase.T
 	return Response{
 		Text:         res.FinalText,
 		Demeanor:     d2,
+		RunID:        res.RunID,
 		InputTokens:  res.InputTokens,
 		OutputTokens: res.OutputTokens,
 		CostUSD:      res.TotalCostUSD,
@@ -258,6 +226,31 @@ func (d *LiveDriver) Respond(ctx context.Context, topic string, technique kase.T
 // panel) can re-open the log read-only without going through the
 // Driver interface. Returns "" when the log is in-memory.
 func (d *LiveDriver) SavePathHint() string { return d.savePath }
+
+// BuildReplayAgent constructs a fresh *starling.Agent configured the
+// same way LiveDriver builds them at runtime — same provider, tools,
+// system prompt, model — so Starling's inspector can replay recorded
+// runs faithfully via its Replay button.
+//
+// log is the eventlog the Agent's runtime would write to; during
+// replay Starling swaps it for an in-memory sink, so an in-memory
+// log here is sufficient.
+func (p *LiveProvider) BuildReplayAgent(log eventlog.EventLog, beliefs map[string]kase.Belief) *starling.Agent {
+	return &starling.Agent{
+		Provider: p.Provider,
+		Tools: []tool.Tool{
+			RecallTool(beliefs),
+			DemeanorTool(func(kase.Demeanor) {}), // sink discarded for replay
+		},
+		Log:    log,
+		Budget: p.Budget,
+		Config: starling.Config{
+			Model:        p.Model,
+			SystemPrompt: SystemPrompt,
+			MaxTurns:     4,
+		},
+	}
+}
 
 // DebugLogPath returns the path the HEARSAY_DEBUG log writes to.
 // Honors HEARSAY_HOME, falls back to $HOME/.hearsay/debug.log.

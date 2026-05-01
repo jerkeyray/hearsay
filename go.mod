@@ -63,4 +63,4 @@ require (
 	modernc.org/sqlite v1.49.1 // indirect
 )
 
-replace github.com/jerkeyray/starling => ../starling
+replace github.com/jerkeyray/starling => /Users/jerkeyray/code/starling

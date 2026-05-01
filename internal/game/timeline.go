@@ -41,7 +41,15 @@ func (s *Session) Branch(turn int, dstSavePath string) (*Session, error) {
 	if turn < -1 || turn >= len(s.log) {
 		return nil, fmt.Errorf("branch: turn %d out of range [-1, %d]", turn, len(s.log)-1)
 	}
-	newDriver, err := s.driver.Branch(dstSavePath)
+	// Use the most recent surviving exchange's RunID as the
+	// ForkSQLite anchor. With turn == -1 we'd have nothing to anchor
+	// on; reject that — there's no point branching from before any
+	// asks have happened.
+	if turn < 0 || len(s.log) == 0 {
+		return nil, fmt.Errorf("branch: cannot branch from before the first ask")
+	}
+	anchor := s.log[turn].RunID
+	newDriver, err := s.driver.Branch(dstSavePath, anchor)
 	if err != nil {
 		return nil, fmt.Errorf("branch: driver: %w", err)
 	}

@@ -141,11 +141,12 @@ func TestLiveDriver_BranchCopiesSQLite(t *testing.T) {
 	defer parent.Close()
 
 	ctx := context.Background()
-	if _, err := parent.Respond(ctx, "the bag", kase.Directly, nil); err != nil {
+	parentResp, err := parent.Respond(ctx, "the bag", kase.Directly, nil)
+	if err != nil {
 		t.Fatalf("parent respond: %v", err)
 	}
 
-	branched, err := parent.Branch(childPath)
+	branched, err := parent.Branch(childPath, parentResp.RunID)
 	if err != nil {
 		t.Fatalf("Branch: %v", err)
 	}

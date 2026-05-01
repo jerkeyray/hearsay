@@ -74,7 +74,8 @@ func (m helpModel) View() string {
 	})
 
 	section("watching the api", [][2]string{
-		{"i (in-game)", "inspector — every starling event in this save."},
+		{"i (in-game)", "inline inspector — every starling event."},
+		{"hearsay inspect <db>", "starling's web inspector + replay button."},
 		{"HEARSAY_DEBUG=1", "stream slog → ~/.hearsay/debug.log (info)."},
 		{"HEARSAY_DEBUG=2", "same, debug-level."},
 	})

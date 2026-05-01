@@ -24,19 +24,23 @@ import (
 type Driver interface {
 	Respond(ctx context.Context, topic string, technique kase.Technique, history []HistoryItem) (Response, error)
 	// Branch returns a sibling driver wired to a fresh per-session
-	// resource at savePath: LiveDriver copies its underlying SQLite
-	// log; StubDriver returns a fresh stub. Used by Session.Branch
-	// to fork a timeline (PRD §3.7).
-	Branch(savePath string) (Driver, error)
+	// resource at savePath. anchorRunID is one runID present in the
+	// source log (typically the most recent ask's RunID); the Live
+	// driver uses it as the eventlog.ForkSQLite anchor. Stub drivers
+	// fall back to a plain copy if no anchor is available.
+	Branch(savePath, anchorRunID string) (Driver, error)
 	Close() error
 }
 
 // Response is one turn's output: the witness's line, the demeanor
 // the model signalled (if any), plus the usage numbers Session uses
-// to drive the session clock.
+// to drive the session clock. RunID is the Starling run identifier
+// for this ask — needed by Branch to fork the underlying SQLite log
+// at this turn.
 type Response struct {
 	Text         string
 	Demeanor     kase.Demeanor
+	RunID        string
 	InputTokens  int64
 	OutputTokens int64
 	CostUSD      float64

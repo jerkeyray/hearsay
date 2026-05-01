@@ -77,13 +77,25 @@ The architecture goal is that adding a new case is writing one Go file in
 
 ## Watching the API calls
 
-Three angles:
+Four angles:
 
 1. **In-game inspector.** Press `i` during interrogation. Every Starling
    event is a row: `RunStarted`, `TurnStarted`, `ToolCallScheduled`,
    `ToolCallCompleted`, `AssistantMessageCompleted`, `RunCompleted`. `enter`
    expands a row to show seq, runID, timestamp, prev-hash, payload size.
-2. **Streaming text log.** Run with `HEARSAY_DEBUG=1` (info) or `2` (debug)
+2. **Starling's web inspector.** Same SQLite log, much fuller view —
+   payloads decoded, tool args/results pretty-printed, a Replay button
+   that re-runs any recorded run against a fresh agent so you can diff
+   what was recorded vs what the agent produces today.
+   ```sh
+   hearsay inspect ~/.hearsay/saves/streetlight-<sessionID>.db
+   ```
+   Opens an HTTP server on `127.0.0.1:<random>` and tries to launch your
+   browser. With an `ANTHROPIC_API_KEY` (or OpenAI) set, the case is
+   parsed from the filename, the right beliefs are wired into the recall
+   tool, and Replay works. Without a key the inspector still opens
+   read-only — events visible, Replay disabled.
+3. **Streaming text log.** Run with `HEARSAY_DEBUG=1` (info) or `2` (debug)
    and tail the log in another terminal:
    ```sh
    HEARSAY_DEBUG=2 ANTHROPIC_API_KEY=... hearsay
@@ -92,7 +104,7 @@ Three angles:
    ```
    You'll see Starling's per-step output: turn boundaries, tool calls,
    token usage, budget tracking, terminal events.
-3. **Direct SQL.** The save file is plain SQLite:
+4. **Direct SQL.** The save file is plain SQLite:
    ```sh
    sqlite3 ~/.hearsay/saves/streetlight-*.db \
      "SELECT seq, kind, length(payload) FROM events ORDER BY seq;"

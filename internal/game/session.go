@@ -43,9 +43,11 @@ var ErrSessionEnded = errors.New("the witness leaves")
 
 // Exchange is one turn in the conversation: what the player asked,
 // what the witness said back, the demeanor signalled that turn, and
-// the usage that turn consumed.
+// the usage that turn consumed. RunID is the Starling run identifier
+// for this ask — branching forks the SQLite log at this run.
 type Exchange struct {
 	Turn         int
+	RunID        string
 	Topic        string
 	Technique    kase.Technique
 	Witness      string
@@ -125,6 +127,7 @@ func (s *Session) Ask(ctx context.Context, topic string, technique kase.Techniqu
 	s.usedCostUSD += resp.CostUSD
 	ex := Exchange{
 		Turn:         len(s.log),
+		RunID:        resp.RunID,
 		Topic:        topic,
 		Technique:    technique,
 		Witness:      resp.Text,
