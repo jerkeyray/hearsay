@@ -42,6 +42,11 @@ type interrogationModel struct {
 	techIdx  int
 	pending  *pendingAsk
 	lastErr  string
+
+	// rewindOpen is true while the rewind picker overlays the
+	// interrogation pane; rewindIdx is the cursor inside it.
+	rewindOpen bool
+	rewindIdx  int
 }
 
 func newInterrogation(s *game.Session) interrogationModel {
@@ -56,6 +61,47 @@ func (m interrogationModel) Close(ctx context.Context) error {
 		return nil
 	}
 	return m.session.Close(ctx)
+}
+
+// updateRewind handles keys while the rewind picker is open. ↑↓
+// navigate; enter rewinds to the highlighted turn; esc cancels.
+// "Before any asks" is selectable as the first item.
+func (m interrogationModel) updateRewind(k tea.KeyMsg) (interrogationModel, tea.Cmd, bool, bool) {
+	turns := m.session.TurnCount()
+	maxIdx := turns // 0..turns-1 = surviving exchange index; turns = "before any asks"
+	switch k.String() {
+	case "esc", "r":
+		m.rewindOpen = false
+		return m, nil, false, false
+	case "q", "ctrl+c":
+		return m, tea.Quit, false, false
+	case "up", "k":
+		if m.rewindIdx > 0 {
+			m.rewindIdx--
+		}
+	case "down", "j":
+		if m.rewindIdx < maxIdx {
+			m.rewindIdx++
+		}
+	case "enter":
+		// rewindIdx == turns means "before any asks" (RewindTo(-1)).
+		target := m.rewindIdx
+		if m.rewindIdx == turns {
+			target = -1
+		}
+		if err := m.session.RewindTo(target); err != nil {
+			m.lastErr = err.Error()
+		} else {
+			m.lastErr = ""
+		}
+		m.rewindOpen = false
+		// Clamp topic cursor since visibility may have shrunk.
+		if topics := m.session.VisibleTopics(); m.topicIdx >= len(topics) && len(topics) > 0 {
+			m.topicIdx = len(topics) - 1
+		}
+		return m, nil, false, false
+	}
+	return m, nil, false, false
 }
 
 // askCmd dispatches Session.Ask in a goroutine so the TUI loop stays
@@ -91,6 +137,12 @@ func (m interrogationModel) Update(msg tea.Msg) (interrogationModel, tea.Cmd, bo
 	if !ok {
 		return m, nil, false, false
 	}
+
+	// Rewind picker captures all keys while open.
+	if m.rewindOpen {
+		return m.updateRewind(k)
+	}
+
 	topics := m.session.VisibleTopics()
 	if m.topicIdx >= len(topics) && len(topics) > 0 {
 		m.topicIdx = len(topics) - 1
@@ -105,6 +157,14 @@ func (m interrogationModel) Update(msg tea.Msg) (interrogationModel, tea.Cmd, bo
 		// to reconstruction. PRD §2.3.
 		m.session.EndSession()
 		return m, nil, false, true
+	case "r":
+		// Open the rewind picker. Disabled while a turn is in flight.
+		if m.pending != nil || m.session.TurnCount() == 0 {
+			return m, nil, false, false
+		}
+		m.rewindOpen = true
+		m.rewindIdx = m.session.TurnCount() - 1
+		return m, nil, false, false
 	case "tab":
 		if m.focus == paneTopics {
 			m.focus = paneTechniques
@@ -148,6 +208,10 @@ func (m interrogationModel) Update(msg tea.Msg) (interrogationModel, tea.Cmd, bo
 }
 
 func (m interrogationModel) View() string {
+	if m.rewindOpen {
+		return m.renderRewindPicker()
+	}
+
 	header := lipgloss.JoinHorizontal(
 		lipgloss.Top,
 		styleTitle.Render("hearsay"),
@@ -162,7 +226,7 @@ func (m interrogationModel) View() string {
 	techs := m.renderTechniques()
 
 	bottom := lipgloss.JoinHorizontal(lipgloss.Top, topics, techs)
-	footer := styleDim.Render("enter ask · ↹ switch panel · d done · esc back · q quit")
+	footer := styleDim.Render("enter ask · ↹ switch panel · r rewind · d done · esc back · q quit")
 
 	parts := []string{header, demeanor, "", dialogue, "", bottom, "", footer}
 	if m.lastErr != "" {
@@ -220,6 +284,43 @@ func (m interrogationModel) renderTopics() string {
 		b.WriteString("\n")
 	}
 	return lipgloss.NewStyle().Width(28).Render(b.String())
+}
+
+// renderRewindPicker shows the past exchanges as a selectable list
+// plus a "before any asks" entry. Selecting an entry rewinds the
+// session to that point. PRD §7.2.4.
+func (m interrogationModel) renderRewindPicker() string {
+	var b strings.Builder
+	b.WriteString(styleTitle.Render("rewind to..."))
+	b.WriteString("\n\n")
+
+	log := m.session.Log()
+	rows := make([]string, 0, len(log)+1)
+	for i, ex := range log {
+		preview := ex.Witness
+		if len(preview) > 60 {
+			preview = preview[:57] + "..."
+		}
+		row := fmt.Sprintf("turn %d · %s (%s)", i, ex.Topic, ex.Technique.Label())
+		if preview != "" {
+			row += "  " + styleMuted.Render("— "+preview)
+		}
+		rows = append(rows, row)
+	}
+	rows = append(rows, styleMuted.Render("(before any asks)"))
+
+	for i, row := range rows {
+		if i == m.rewindIdx {
+			b.WriteString(styleSelected.Render("▸ " + row))
+		} else {
+			b.WriteString(styleDim.Render("  " + row))
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(styleDim.Render("↑↓ select · enter rewind here · esc cancel"))
+	return styleBorder.Render(b.String())
 }
 
 func (m interrogationModel) renderTechniques() string {
