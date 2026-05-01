@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -13,22 +14,49 @@ import (
 // rows showing player vs witness vs truth with an error-kind
 // classification, and a qualitative grade. PRD §7.2.7.
 //
-// The verify-chain modal lands in M5 polish; this screen has a
-// placeholder stub for it.
+// Pressing v walks the SQLite event log and shows the hash-chain
+// verify modal (PRD §3.8).
 type verdictModel struct {
-	verdict game.Verdict
+	verdict     game.Verdict
+	savePath    string
+	verifyOpen  bool
+	verifyResult *game.VerifyResult
+	verifyErr   string
 }
 
-func newVerdict(v game.Verdict) verdictModel { return verdictModel{verdict: v} }
+func newVerdict(v game.Verdict, savePath string) verdictModel {
+	return verdictModel{verdict: v, savePath: savePath}
+}
 
 func (m verdictModel) Init() tea.Cmd { return nil }
 
 // Update returns (next, cmd, done). done=true returns to splash.
 func (m verdictModel) Update(msg tea.Msg) (verdictModel, tea.Cmd, bool) {
 	if k, ok := msg.(tea.KeyMsg); ok {
-		switch k.String() {
+		s := k.String()
+		if m.verifyOpen {
+			switch s {
+			case "esc", "v", "enter", " ", "space":
+				m.verifyOpen = false
+			case "q", "ctrl+c":
+				return m, tea.Quit, false
+			}
+			return m, nil, false
+		}
+		switch s {
 		case "q", "ctrl+c":
 			return m, tea.Quit, false
+		case "v":
+			r, err := game.Verify(context.Background(), m.savePath)
+			if err != nil {
+				m.verifyErr = err.Error()
+				m.verifyResult = nil
+			} else {
+				m.verifyErr = ""
+				m.verifyResult = &r
+			}
+			m.verifyOpen = true
+			return m, nil, false
 		case "enter", "esc", " ", "space":
 			return m, nil, true
 		}
@@ -37,6 +65,10 @@ func (m verdictModel) Update(msg tea.Msg) (verdictModel, tea.Cmd, bool) {
 }
 
 func (m verdictModel) View() string {
+	if m.verifyOpen {
+		return m.renderVerify()
+	}
+
 	var b strings.Builder
 	b.WriteString(styleTitle.Render("verdict"))
 	b.WriteString("\n\n")
@@ -54,8 +86,48 @@ func (m verdictModel) View() string {
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
-	b.WriteString(styleDim.Render("[ verify chain ] (M5 polish)   [ enter / esc to return ]"))
+	b.WriteString(styleDim.Render("v verify chain   ·   enter/esc return"))
 
+	return styleBorder.Render(b.String())
+}
+
+func (m verdictModel) renderVerify() string {
+	var b strings.Builder
+	b.WriteString(styleTitle.Render("verify chain"))
+	b.WriteString("\n\n")
+
+	if m.verifyErr != "" {
+		b.WriteString(styleDim.Render("could not verify:\n  " + m.verifyErr))
+		b.WriteString("\n\n")
+		b.WriteString(styleDim.Render("esc / v to return"))
+		return styleBorder.Render(b.String())
+	}
+	r := m.verifyResult
+	if r == nil {
+		return styleBorder.Render("(no result)")
+	}
+
+	row := func(label, val string) {
+		fmt.Fprintf(&b, "  %s  %s\n", styleMuted.Render(pad(label, 18)), val)
+	}
+	row("file:", r.Path)
+	row("runs:", fmt.Sprintf("%d", r.RunCount))
+	row("events:", fmt.Sprintf("%d", r.EventCount))
+	row("first event seq:", fmt.Sprintf("%d", r.FirstSeq))
+	row("first hash:", fmt.Sprintf("%x", r.FirstHash))
+	row("first at:", r.FirstAt.UTC().Format("2006-01-02 15:04:05Z"))
+	row("last event seq:", fmt.Sprintf("%d", r.LastSeq))
+	row("last hash:", fmt.Sprintf("%x", r.LastHash))
+	row("last at:", r.LastAt.UTC().Format("2006-01-02 15:04:05Z"))
+	b.WriteString("\n")
+
+	if r.OK {
+		b.WriteString(styleSelected.Render("the chain is intact."))
+	} else {
+		b.WriteString(styleDim.Render("the chain is broken: " + r.Reason))
+	}
+	b.WriteString("\n\n")
+	b.WriteString(styleDim.Render("esc / v to return"))
 	return styleBorder.Render(b.String())
 }
 

@@ -70,5 +70,7 @@ func (m splashModel) View() string {
 		}
 		b.WriteString("\n")
 	}
+	b.WriteString("\n")
+	b.WriteString(styleDim.Render("? help · q quit"))
 	return styleBorder.Render(b.String())
 }

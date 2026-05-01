@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -117,6 +118,67 @@ func TestLiveDriver_RoundTripSQLite(t *testing.T) {
 		if err := eventlog.Validate(evs); err != nil {
 			t.Errorf("validate %s: %v", r.RunID, err)
 		}
+	}
+}
+
+// TestLiveDriver_BranchCopiesSQLite runs one ask, branches the
+// driver, runs another ask on the branch, then confirms both files
+// exist and the parent is unchanged from the branch's perspective.
+func TestLiveDriver_BranchCopiesSQLite(t *testing.T) {
+	tmp := t.TempDir()
+	parentPath := filepath.Join(tmp, "parent.db")
+	childPath := filepath.Join(tmp, "child.db")
+
+	prov := &scriptedProvider{
+		info: provider.Info{ID: "scripted", APIVersion: "v0"},
+		text: "she pauses.",
+	}
+	owner := &witness.LiveProvider{Provider: prov, ProviderID: "scripted", Model: "test-model"}
+	parent, err := owner.NewDriver(parentPath, streetlight.Case)
+	if err != nil {
+		t.Fatalf("NewDriver: %v", err)
+	}
+	defer parent.Close()
+
+	ctx := context.Background()
+	if _, err := parent.Respond(ctx, "the bag", kase.Directly, nil); err != nil {
+		t.Fatalf("parent respond: %v", err)
+	}
+
+	branched, err := parent.Branch(childPath)
+	if err != nil {
+		t.Fatalf("Branch: %v", err)
+	}
+	defer branched.Close()
+
+	if _, err := os.Stat(childPath); err != nil {
+		t.Fatalf("child file missing: %v", err)
+	}
+
+	// Run another ask on the child.
+	if _, err := branched.Respond(ctx, "the bag", kase.Directly, nil); err != nil {
+		t.Fatalf("child respond: %v", err)
+	}
+
+	// Re-read both files; child should have one more run than parent.
+	parentRO, err := eventlog.NewSQLite(parentPath, eventlog.WithReadOnly())
+	if err != nil {
+		t.Fatalf("re-open parent: %v", err)
+	}
+	defer parentRO.Close()
+	childRO, err := eventlog.NewSQLite(childPath, eventlog.WithReadOnly())
+	if err != nil {
+		t.Fatalf("re-open child: %v", err)
+	}
+	defer childRO.Close()
+
+	parentRuns, _ := parentRO.(eventlog.RunLister).ListRuns(ctx)
+	childRuns, _ := childRO.(eventlog.RunLister).ListRuns(ctx)
+	if len(parentRuns) != 1 {
+		t.Errorf("parent run count = %d, want 1 (unchanged after branch)", len(parentRuns))
+	}
+	if len(childRuns) != 2 {
+		t.Errorf("child run count = %d, want 2 (1 copied + 1 new)", len(childRuns))
 	}
 }
 

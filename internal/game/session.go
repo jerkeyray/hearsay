@@ -56,8 +56,9 @@ type Exchange struct {
 // main loop via tea.Cmd while View renders on the main loop. mu
 // guards every field below it.
 type Session struct {
-	Case   kase.Case
-	driver witness.Driver
+	Case     kase.Case
+	Timeline string // "A" for the original; "A.1", "A.1.1", ... for branches
+	driver   witness.Driver
 
 	mu               sync.RWMutex
 	log              []Exchange
@@ -67,6 +68,7 @@ type Session struct {
 	visible          map[string]bool // topic name → visible?
 	ended            bool            // player chose "I'm done" or budget tripped
 	reconstruction   *Reconstruction // set by SubmitReconstruction
+	branchCount      int             // children spawned from this session, for naming
 }
 
 // NewSession constructs a session over a case + witness driver and
@@ -82,7 +84,7 @@ func NewSession(_ context.Context, c kase.Case, d witness.Driver, b Budget) (*Se
 			visible[t.Name] = true
 		}
 	}
-	return &Session{Case: c, driver: d, budget: b, visible: visible}, nil
+	return &Session{Case: c, Timeline: "A", driver: d, budget: b, visible: visible}, nil
 }
 
 // Ask runs one turn: build conversation history, invoke the driver,
@@ -177,6 +179,15 @@ func (s *Session) IsEnded() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.ended || s.budgetExhausted()
+}
+
+// SavePath returns the on-disk save file backing this session, or
+// "" when the driver is in-memory (stub or scripted-test path).
+func (s *Session) SavePath() string {
+	if sp, ok := s.driver.(interface{ SavePathHint() string }); ok {
+		return sp.SavePathHint()
+	}
+	return ""
 }
 
 // SubmitReconstruction stores the player's reconstruction answers.

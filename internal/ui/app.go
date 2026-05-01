@@ -8,7 +8,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/oklog/ulid/v2"
 
-	"github.com/jerkeyray/hearsay/cases/streetlight"
 	"github.com/jerkeyray/hearsay/internal/game"
 	"github.com/jerkeyray/hearsay/internal/kase"
 	"github.com/jerkeyray/hearsay/internal/witness"
@@ -24,6 +23,7 @@ type screen int
 
 const (
 	screenSplash screen = iota
+	screenCasePicker
 	screenBriefing
 	screenInterrogation
 	screenReconstruction
@@ -35,10 +35,14 @@ const (
 type model struct {
 	screen         screen
 	splash         splashModel
+	casePicker     casePickerModel
 	briefing       briefingModel
 	interrogation  interrogationModel
 	reconstruction reconstructionModel
 	verdict        verdictModel
+	help           helpModel
+	helpOpen       bool
+	cases          []kase.Case
 	session        *game.Session // active session, nil between cases
 	makeDriver     DriverFactory
 	errMsg         string
@@ -47,8 +51,9 @@ type model struct {
 }
 
 // New constructs the root TUI model. makeDriver builds a fresh
-// Driver per session; when nil, the stub driver is used.
-func New(makeDriver DriverFactory) tea.Model {
+// Driver per session; when nil, the stub driver is used. cases is
+// the list of available cases; an empty list disables "new case".
+func New(makeDriver DriverFactory, cases []kase.Case) tea.Model {
 	if makeDriver == nil {
 		makeDriver = func(_ context.Context, _ kase.Case, _ string) (witness.Driver, error) {
 			return witness.NewStubDriver(), nil
@@ -57,6 +62,7 @@ func New(makeDriver DriverFactory) tea.Model {
 	return model{
 		screen:     screenSplash,
 		splash:     newSplash(),
+		cases:      cases,
 		makeDriver: makeDriver,
 	}
 }
@@ -64,6 +70,23 @@ func New(makeDriver DriverFactory) tea.Model {
 func (m model) Init() tea.Cmd { return nil }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Help overlay: captures all keys while open.
+	if m.helpOpen {
+		next, cmd, done := m.help.Update(msg)
+		m.help = next
+		if done {
+			m.helpOpen = false
+		}
+		return m, cmd
+	}
+	// "?" opens help globally — but not on the reconstruction screen
+	// where it's a printable character users may want to type.
+	if k, ok := msg.(tea.KeyMsg); ok && k.String() == "?" && m.screen != screenReconstruction {
+		m.help = newHelp()
+		m.helpOpen = true
+		return m, nil
+	}
+
 	switch m.screen {
 	case screenSplash:
 		next, cmd, choice, picked := m.splash.Update(msg)
@@ -76,50 +99,71 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case choiceNew:
-			m.briefing = newBriefing(streetlight.Case)
-			m.screen = screenBriefing
+			if len(m.cases) == 0 {
+				m.errMsg = "no cases compiled in"
+				m.screen = screenError
+				return m, nil
+			}
+			if len(m.cases) == 1 {
+				m = m.openCase(m.cases[0])
+				return m, nil
+			}
+			m.casePicker = newCasePicker(m.cases)
+			m.screen = screenCasePicker
 		case choiceContinue:
 			m.screen = screenPlaceholder
 			m.placeholder = "continue — save picker lands here later"
 		}
 		return m, nil
 
-	case screenBriefing:
-		next, cmd, advance, back := m.briefing.Update(msg)
-		m.briefing = next
+	case screenCasePicker:
+		next, cmd, picked, back := m.casePicker.Update(msg)
+		m.casePicker = next
 		if back {
 			m.screen = screenSplash
 			return m, nil
 		}
+		if picked {
+			c := m.casePicker.Selected()
+			m.briefing = newBriefing(c)
+			m.screen = screenBriefing
+			return m, nil
+		}
+		return m, cmd
+
+	case screenBriefing:
+		next, cmd, advance, back := m.briefing.Update(msg)
+		m.briefing = next
+		if back {
+			if len(m.cases) > 1 {
+				m.screen = screenCasePicker
+			} else {
+				m.screen = screenSplash
+			}
+			return m, nil
+		}
 		if advance {
-			ctx := context.Background()
-			savePath, err := newSavePath(streetlight.Case.ID)
-			if err != nil {
-				m.errMsg = err.Error()
-				m.screen = screenError
-				return m, nil
-			}
-			driver, err := m.makeDriver(ctx, streetlight.Case, savePath)
-			if err != nil {
-				m.errMsg = err.Error()
-				m.screen = screenError
-				return m, nil
-			}
-			session, err := game.NewSession(ctx, streetlight.Case, driver, game.DefaultBudget)
-			if err != nil {
-				_ = driver.Close()
-				m.errMsg = err.Error()
-				m.screen = screenError
-				return m, nil
-			}
-			m.session = session
-			m.interrogation = newInterrogation(session)
-			m.screen = screenInterrogation
+			m = m.openCase(m.briefing.kase)
 			return m, nil
 		}
 		return m, cmd
 
 	case screenInterrogation:
+		// Branch completion: swap the active session.
+		if b, ok := msg.(branchedMsg); ok {
+			if b.err != nil {
+				m.errMsg = b.err.Error()
+				m.screen = screenError
+				return m, nil
+			}
+			// Close the parent session's driver — the child owns
+			// its own copy now. The parent's SQLite history is on
+			// disk, untouched.
+			_ = m.session.Close(context.Background())
+			m.session = b.session
+			m.interrogation = newInterrogation(b.session)
+			return m, nil
+		}
 		next, cmd, back, done := m.interrogation.Update(msg)
 		m.interrogation = next
 		if done {
@@ -142,7 +186,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			r := m.reconstruction.Result()
 			m.session.SubmitReconstruction(r)
 			v := game.Score(m.session.Case, m.session.Log(), r)
-			m.verdict = newVerdict(v)
+			m.verdict = newVerdict(v, m.session.SavePath())
 			m.screen = screenVerdict
 			return m, nil
 		}
@@ -192,9 +236,14 @@ func (m model) View() string {
 	if m.quitting {
 		return ""
 	}
+	if m.helpOpen {
+		return m.help.View()
+	}
 	switch m.screen {
 	case screenSplash:
 		return m.splash.View()
+	case screenCasePicker:
+		return m.casePicker.View()
 	case screenBriefing:
 		return m.briefing.View()
 	case screenInterrogation:
@@ -214,6 +263,36 @@ func (m model) View() string {
 	return ""
 }
 
+// openCase opens a save file, builds a driver via the factory,
+// constructs a Session, and transitions to the interrogation screen.
+// On any error, transitions to the error screen with errMsg set.
+func (m model) openCase(c kase.Case) model {
+	ctx := context.Background()
+	savePath, err := newSavePath(c.ID)
+	if err != nil {
+		m.errMsg = err.Error()
+		m.screen = screenError
+		return m
+	}
+	driver, err := m.makeDriver(ctx, c, savePath)
+	if err != nil {
+		m.errMsg = err.Error()
+		m.screen = screenError
+		return m
+	}
+	session, err := game.NewSession(ctx, c, driver, game.DefaultBudget)
+	if err != nil {
+		_ = driver.Close()
+		m.errMsg = err.Error()
+		m.screen = screenError
+		return m
+	}
+	m.session = session
+	m.interrogation = newInterrogation(session)
+	m.screen = screenInterrogation
+	return m
+}
+
 // newSavePath returns a fresh SQLite save path under the user's
 // hearsay home directory: <saveDir>/<caseID>-<sessionID>.db.
 func newSavePath(caseID string) (string, error) {
@@ -223,4 +302,17 @@ func newSavePath(caseID string) (string, error) {
 	}
 	sessionID := ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader).String()
 	return game.SavePath(saveDir, caseID, sessionID), nil
+}
+
+// newBranchSavePath returns a save path for a branched session
+// alongside the parent file. The timeline label is encoded into the
+// filename so saves on disk are easy to relate.
+func newBranchSavePath(caseID, parentTimeline string) (string, error) {
+	saveDir, err := game.EnsureSaveDir()
+	if err != nil {
+		return "", err
+	}
+	sessionID := ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader).String()
+	// e.g. streetlight-<ulid>-A.1.db
+	return game.SavePath(saveDir, caseID, sessionID+"-"+parentTimeline+"-branch"), nil
 }

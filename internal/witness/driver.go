@@ -23,6 +23,11 @@ import (
 // other resources; callers must Close when the session ends.
 type Driver interface {
 	Respond(ctx context.Context, topic string, technique kase.Technique, history []HistoryItem) (Response, error)
+	// Branch returns a sibling driver wired to a fresh per-session
+	// resource at savePath: LiveDriver copies its underlying SQLite
+	// log; StubDriver returns a fresh stub. Used by Session.Branch
+	// to fork a timeline (PRD §3.7).
+	Branch(savePath string) (Driver, error)
 	Close() error
 }
 

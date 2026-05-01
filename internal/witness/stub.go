@@ -49,6 +49,10 @@ var stubDemeanor = map[kase.Technique]kase.Demeanor{
 	kase.CircleBackLater: kase.DemeanorEngaged,
 }
 
+// Branch returns a fresh StubDriver — there's no per-session state
+// to copy.
+func (d *StubDriver) Branch(_ string) (Driver, error) { return NewStubDriver(), nil }
+
 // Close is a no-op for StubDriver.
 func (d *StubDriver) Close() error { return nil }
 

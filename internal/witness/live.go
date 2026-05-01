@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"time"
@@ -100,7 +101,62 @@ func (p *LiveProvider) NewDriver(savePath string, c kase.Case) (*LiveDriver, err
 	if err != nil {
 		return nil, fmt.Errorf("open event log: %w", err)
 	}
-	return newLiveDriver(p.Provider, p.Model, p.Budget, log, c.Beliefs), nil
+	return newLiveDriver(p.Provider, p.Model, p.Budget, log, c.Beliefs, savePath, p), nil
+}
+
+// Branch copies the underlying SQLite log (and any WAL/SHM
+// sidecars) to dstPath, opens it, and returns a sibling LiveDriver
+// that writes future runs into the copy. The original driver is
+// unaffected.
+func (d *LiveDriver) Branch(dstPath string) (Driver, error) {
+	if d.savePath == "" || d.owner == nil {
+		return nil, fmt.Errorf("branch: live driver has no save path (in-memory log?)")
+	}
+	if err := copySQLite(d.savePath, dstPath); err != nil {
+		return nil, fmt.Errorf("branch: copy save: %w", err)
+	}
+	log, err := eventlog.NewSQLite(dstPath)
+	if err != nil {
+		return nil, fmt.Errorf("branch: open copy: %w", err)
+	}
+	return newLiveDriver(d.owner.Provider, d.owner.Model, d.owner.Budget, log, d.beliefs, dstPath, d.owner), nil
+}
+
+// copySQLite copies a SQLite database file plus its -wal and -shm
+// sidecars (if present) to a parallel destination. WAL mode means
+// recent writes may live entirely in the .db-wal file until a
+// checkpoint, so a naive single-file copy can miss them.
+func copySQLite(src, dst string) error {
+	if err := copyOne(src, dst); err != nil {
+		return err
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		s := src + suffix
+		if _, err := os.Stat(s); err != nil {
+			continue
+		}
+		if err := copyOne(s, dst+suffix); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func copyOne(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 // LiveDriver runs a starling.Agent per ask against a real (or scripted)
@@ -113,22 +169,31 @@ type LiveDriver struct {
 	budget   *starling.Budget
 	log      eventlog.EventLog
 	beliefs  map[string]kase.Belief
+	// savePath is the on-disk path of the SQLite event log, captured
+	// so Branch can copy the file. Empty when log is in-memory (the
+	// scripted-provider tests path).
+	savePath string
+	// owner remembers which factory built us so Branch can rebuild
+	// itself with a fresh eventlog at a new path. nil for tests.
+	owner *LiveProvider
 }
 
 // NewLiveDriverWith is a low-level constructor used by tests with a
 // scripted provider and an in-memory event log. Production code uses
 // LiveProvider.NewDriver.
 func NewLiveDriverWith(p provider.Provider, model string, budget *starling.Budget, log eventlog.EventLog, beliefs map[string]kase.Belief) *LiveDriver {
-	return newLiveDriver(p, model, budget, log, beliefs)
+	return newLiveDriver(p, model, budget, log, beliefs, "", nil)
 }
 
-func newLiveDriver(p provider.Provider, model string, budget *starling.Budget, log eventlog.EventLog, beliefs map[string]kase.Belief) *LiveDriver {
+func newLiveDriver(p provider.Provider, model string, budget *starling.Budget, log eventlog.EventLog, beliefs map[string]kase.Belief, savePath string, owner *LiveProvider) *LiveDriver {
 	return &LiveDriver{
 		provider: p,
 		model:    model,
 		budget:   budget,
 		log:      log,
 		beliefs:  beliefs,
+		savePath: savePath,
+		owner:    owner,
 	}
 }
 
@@ -183,6 +248,11 @@ func (d *LiveDriver) Respond(ctx context.Context, topic string, technique kase.T
 		CostUSD:      res.TotalCostUSD,
 	}, nil
 }
+
+// SavePathHint exposes the SQLite path so callers (the inspector
+// panel) can re-open the log read-only without going through the
+// Driver interface. Returns "" when the log is in-memory.
+func (d *LiveDriver) SavePathHint() string { return d.savePath }
 
 // Close releases the underlying event log.
 func (d *LiveDriver) Close() error {

@@ -35,6 +35,13 @@ type witnessRespondedMsg struct {
 	err error
 }
 
+// branchedMsg is delivered when Session.Branch finishes. The router
+// (app.go) handles it by swapping the active session.
+type branchedMsg struct {
+	session *game.Session
+	err     error
+}
+
 type interrogationModel struct {
 	session  *game.Session
 	focus    pane
@@ -43,10 +50,18 @@ type interrogationModel struct {
 	pending  *pendingAsk
 	lastErr  string
 
-	// rewindOpen is true while the rewind picker overlays the
-	// interrogation pane; rewindIdx is the cursor inside it.
+	// rewindOpen is true while the rewind/branch picker overlays
+	// the interrogation pane; rewindIdx is the cursor inside it.
+	// rewindMode: "rewind" or "branch"; affects the action taken
+	// on enter.
 	rewindOpen bool
 	rewindIdx  int
+	rewindMode string
+
+	// inspectorOpen overlays the inspector panel. inspector holds
+	// its model (loaded lazily on each open).
+	inspectorOpen bool
+	inspector     inspectorModel
 }
 
 func newInterrogation(s *game.Session) interrogationModel {
@@ -63,14 +78,14 @@ func (m interrogationModel) Close(ctx context.Context) error {
 	return m.session.Close(ctx)
 }
 
-// updateRewind handles keys while the rewind picker is open. ↑↓
-// navigate; enter rewinds to the highlighted turn; esc cancels.
-// "Before any asks" is selectable as the first item.
+// updateRewind handles keys while the rewind/branch picker is open.
+// ↑↓ navigate; enter rewinds or branches to the highlighted turn;
+// esc cancels. "Before any asks" is selectable as the last item.
 func (m interrogationModel) updateRewind(k tea.KeyMsg) (interrogationModel, tea.Cmd, bool, bool) {
 	turns := m.session.TurnCount()
 	maxIdx := turns // 0..turns-1 = surviving exchange index; turns = "before any asks"
 	switch k.String() {
-	case "esc", "r":
+	case "esc", "r", "b":
 		m.rewindOpen = false
 		return m, nil, false, false
 	case "q", "ctrl+c":
@@ -84,10 +99,14 @@ func (m interrogationModel) updateRewind(k tea.KeyMsg) (interrogationModel, tea.
 			m.rewindIdx++
 		}
 	case "enter":
-		// rewindIdx == turns means "before any asks" (RewindTo(-1)).
 		target := m.rewindIdx
 		if m.rewindIdx == turns {
 			target = -1
+		}
+		if m.rewindMode == "branch" {
+			cmd := branchCmd(m.session, target, m.session.Case.ID)
+			m.rewindOpen = false
+			return m, cmd, false, false
 		}
 		if err := m.session.RewindTo(target); err != nil {
 			m.lastErr = err.Error()
@@ -95,13 +114,25 @@ func (m interrogationModel) updateRewind(k tea.KeyMsg) (interrogationModel, tea.
 			m.lastErr = ""
 		}
 		m.rewindOpen = false
-		// Clamp topic cursor since visibility may have shrunk.
 		if topics := m.session.VisibleTopics(); m.topicIdx >= len(topics) && len(topics) > 0 {
 			m.topicIdx = len(topics) - 1
 		}
 		return m, nil, false, false
 	}
 	return m, nil, false, false
+}
+
+// branchCmd dispatches Session.Branch off-thread (the SQLite copy
+// can take a moment) and returns a branchedMsg the router handles.
+func branchCmd(s *game.Session, turn int, caseID string) tea.Cmd {
+	return func() tea.Msg {
+		dst, err := newBranchSavePath(caseID, s.Timeline)
+		if err != nil {
+			return branchedMsg{err: err}
+		}
+		child, err := s.Branch(turn, dst)
+		return branchedMsg{session: child, err: err}
+	}
 }
 
 // askCmd dispatches Session.Ask in a goroutine so the TUI loop stays
@@ -142,6 +173,15 @@ func (m interrogationModel) Update(msg tea.Msg) (interrogationModel, tea.Cmd, bo
 	if m.rewindOpen {
 		return m.updateRewind(k)
 	}
+	// Inspector overlay captures all keys while open.
+	if m.inspectorOpen {
+		next, cmd, done := m.inspector.Update(msg)
+		m.inspector = next
+		if done {
+			m.inspectorOpen = false
+		}
+		return m, cmd, false, false
+	}
 
 	topics := m.session.VisibleTopics()
 	if m.topicIdx >= len(topics) && len(topics) > 0 {
@@ -158,12 +198,25 @@ func (m interrogationModel) Update(msg tea.Msg) (interrogationModel, tea.Cmd, bo
 		m.session.EndSession()
 		return m, nil, false, true
 	case "r":
-		// Open the rewind picker. Disabled while a turn is in flight.
 		if m.pending != nil || m.session.TurnCount() == 0 {
 			return m, nil, false, false
 		}
 		m.rewindOpen = true
+		m.rewindMode = "rewind"
 		m.rewindIdx = m.session.TurnCount() - 1
+		return m, nil, false, false
+	case "b":
+		if m.pending != nil || m.session.TurnCount() == 0 {
+			return m, nil, false, false
+		}
+		m.rewindOpen = true
+		m.rewindMode = "branch"
+		m.rewindIdx = m.session.TurnCount() - 1
+		return m, nil, false, false
+	case "i":
+		// Open the inspector over the current save file.
+		m.inspector = newInspector(m.session.SavePath())
+		m.inspectorOpen = true
 		return m, nil, false, false
 	case "tab":
 		if m.focus == paneTopics {
@@ -208,6 +261,9 @@ func (m interrogationModel) Update(msg tea.Msg) (interrogationModel, tea.Cmd, bo
 }
 
 func (m interrogationModel) View() string {
+	if m.inspectorOpen {
+		return m.inspector.View()
+	}
 	if m.rewindOpen {
 		return m.renderRewindPicker()
 	}
@@ -216,6 +272,7 @@ func (m interrogationModel) View() string {
 		lipgloss.Top,
 		styleTitle.Render("hearsay"),
 		styleDim.Render("  ·  "+m.session.Case.ID),
+		styleDim.Render("  ·  "+m.session.Timeline),
 		styleDim.Render("  ·  "+m.session.ClockDisplay()),
 	)
 
@@ -226,7 +283,7 @@ func (m interrogationModel) View() string {
 	techs := m.renderTechniques()
 
 	bottom := lipgloss.JoinHorizontal(lipgloss.Top, topics, techs)
-	footer := styleDim.Render("enter ask · ↹ switch panel · r rewind · d done · esc back · q quit")
+	footer := styleDim.Render("enter ask · ↹ pane · r rewind · b branch · i inspector · d done · esc back · q quit")
 
 	parts := []string{header, demeanor, "", dialogue, "", bottom, "", footer}
 	if m.lastErr != "" {
@@ -287,11 +344,17 @@ func (m interrogationModel) renderTopics() string {
 }
 
 // renderRewindPicker shows the past exchanges as a selectable list
-// plus a "before any asks" entry. Selecting an entry rewinds the
-// session to that point. PRD §7.2.4.
+// plus a "before any asks" entry. Selecting an entry rewinds (or
+// branches at) that point. PRD §7.2.4.
 func (m interrogationModel) renderRewindPicker() string {
+	title := "rewind to..."
+	hint := "↑↓ select · enter rewind here · esc cancel"
+	if m.rewindMode == "branch" {
+		title = "branch from..."
+		hint = "↑↓ select · enter branch here · esc cancel"
+	}
 	var b strings.Builder
-	b.WriteString(styleTitle.Render("rewind to..."))
+	b.WriteString(styleTitle.Render(title))
 	b.WriteString("\n\n")
 
 	log := m.session.Log()
@@ -319,7 +382,7 @@ func (m interrogationModel) renderRewindPicker() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(styleDim.Render("↑↓ select · enter rewind here · esc cancel"))
+	b.WriteString(styleDim.Render(hint))
 	return styleBorder.Render(b.String())
 }
 
