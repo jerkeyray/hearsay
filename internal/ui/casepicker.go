@@ -67,5 +67,5 @@ func (m casePickerModel) View() string {
 	}
 	b.WriteString("\n")
 	b.WriteString(styleDim.Render("↑↓ select · enter open · esc back · q quit"))
-	return styleBorder.Render(b.String())
+	return b.String()
 }

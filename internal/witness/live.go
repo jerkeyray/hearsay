@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -19,12 +21,14 @@ import (
 	"github.com/jerkeyray/hearsay/internal/kase"
 )
 
-// DefaultBudget is the per-session token / USD cap from PRD §3.5 / §8.5.
-// Mapped onto the session clock in step 13.
+// DefaultBudget is the per-session token / USD cap. The session-clock
+// math in game.Session maps 1000 output tokens → 1 minute of game
+// time, so 3000 tokens reads as a 3:00 starting clock. WallClock is
+// kept generous so a slow LLM call doesn't kill an in-flight ask.
 var DefaultBudget = &starling.Budget{
-	MaxOutputTokens: 50_000,
-	MaxUSD:          0.40,
-	MaxWallClock:    30 * time.Minute,
+	MaxOutputTokens: 3_000,
+	MaxUSD:          0.05,
+	MaxWallClock:    10 * time.Minute,
 }
 
 // LiveProvider holds the provider-level config that lasts across
@@ -227,6 +231,7 @@ func (d *LiveDriver) Respond(ctx context.Context, topic string, technique kase.T
 			Model:        d.model,
 			SystemPrompt: SystemPrompt,
 			MaxTurns:     4,
+			Logger:       debugLogger(),
 		},
 	}
 
@@ -253,6 +258,47 @@ func (d *LiveDriver) Respond(ctx context.Context, topic string, technique kase.T
 // panel) can re-open the log read-only without going through the
 // Driver interface. Returns "" when the log is in-memory.
 func (d *LiveDriver) SavePathHint() string { return d.savePath }
+
+// DebugLogPath returns the path the HEARSAY_DEBUG log writes to.
+// Honors HEARSAY_HOME, falls back to $HOME/.hearsay/debug.log.
+func DebugLogPath() (string, error) {
+	if h := os.Getenv("HEARSAY_HOME"); h != "" {
+		return filepath.Join(h, "debug.log"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".hearsay", "debug.log"), nil
+}
+
+// debugLogger returns a slog.Logger writing to HEARSAY_HOME/debug.log
+// when HEARSAY_DEBUG=1. Returns nil otherwise; nil disables Starling's
+// logging pipeline at no cost.
+//
+// Logs are appended (not truncated) so multiple sessions accumulate;
+// readers tail the file in another terminal.
+func debugLogger() *slog.Logger {
+	if os.Getenv("HEARSAY_DEBUG") != "1" {
+		return nil
+	}
+	path, err := DebugLogPath()
+	if err != nil {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return nil
+	}
+	level := slog.LevelInfo
+	if os.Getenv("HEARSAY_DEBUG") == "2" {
+		level = slog.LevelDebug
+	}
+	return slog.New(slog.NewTextHandler(f, &slog.HandlerOptions{Level: level}))
+}
 
 // Close releases the underlying event log.
 func (d *LiveDriver) Close() error {

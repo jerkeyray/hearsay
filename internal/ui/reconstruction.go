@@ -184,7 +184,7 @@ func (m reconstructionModel) View() string {
 		"↑↓ question · ←→/space choice · tab don't know · s/enter submit · esc back · q quit",
 	)
 	b.WriteString(footer)
-	return styleBorder.Render(b.String())
+	return b.String()
 }
 
 func (m reconstructionModel) renderQuestion(q kase.Question, a *reconAnswer, focused bool) string {

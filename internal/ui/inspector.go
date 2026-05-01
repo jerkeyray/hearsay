@@ -110,13 +110,13 @@ func (m inspectorModel) View() string {
 		b.WriteString(styleDim.Render("could not read log:\n  " + m.loadErr))
 		b.WriteString("\n\n")
 		b.WriteString(styleDim.Render("esc back · q quit"))
-		return styleBorder.Render(b.String())
+		return b.String()
 	}
 
 	if len(m.events) == 0 {
 		b.WriteString(styleMuted.Render("(no events yet)\n\n"))
 		b.WriteString(styleDim.Render("esc back · q quit"))
-		return styleBorder.Render(b.String())
+		return b.String()
 	}
 
 	// Render a windowed view of ~20 rows centered on the cursor so
@@ -171,7 +171,7 @@ func (m inspectorModel) View() string {
 
 	b.WriteString("\n")
 	b.WriteString(styleDim.Render("↑↓ scroll · enter expand · g/G top/bottom · esc back · q quit"))
-	return styleBorder.Render(b.String())
+	return b.String()
 }
 
 func truncate(s string, n int) string {

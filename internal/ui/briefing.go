@@ -40,5 +40,5 @@ func (m briefingModel) View() string {
 	b.WriteString(m.kase.Briefing)
 	b.WriteString("\n\n")
 	b.WriteString(styleDim.Render("enter begin · esc back · q quit"))
-	return styleBorder.Render(b.String())
+	return b.String()
 }

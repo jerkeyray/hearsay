@@ -88,7 +88,7 @@ func (m verdictModel) View() string {
 	b.WriteString("\n")
 	b.WriteString(styleDim.Render("v verify chain   ·   enter/esc return"))
 
-	return styleBorder.Render(b.String())
+	return b.String()
 }
 
 func (m verdictModel) renderVerify() string {
@@ -100,11 +100,11 @@ func (m verdictModel) renderVerify() string {
 		b.WriteString(styleDim.Render("could not verify:\n  " + m.verifyErr))
 		b.WriteString("\n\n")
 		b.WriteString(styleDim.Render("esc / v to return"))
-		return styleBorder.Render(b.String())
+		return b.String()
 	}
 	r := m.verifyResult
 	if r == nil {
-		return styleBorder.Render("(no result)")
+		return "(no result)"
 	}
 
 	row := func(label, val string) {
@@ -128,7 +128,7 @@ func (m verdictModel) renderVerify() string {
 	}
 	b.WriteString("\n\n")
 	b.WriteString(styleDim.Render("esc / v to return"))
-	return styleBorder.Render(b.String())
+	return b.String()
 }
 
 func (m verdictModel) renderItem(it game.VerdictItem) string {

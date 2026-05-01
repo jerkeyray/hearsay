@@ -73,6 +73,12 @@ func (m helpModel) View() string {
 		{"q / ctrl+c", "quit."},
 	})
 
+	section("watching the api", [][2]string{
+		{"i (in-game)", "inspector — every starling event in this save."},
+		{"HEARSAY_DEBUG=1", "stream slog → ~/.hearsay/debug.log (info)."},
+		{"HEARSAY_DEBUG=2", "same, debug-level."},
+	})
+
 	b.WriteString(styleDim.Render("press ? or esc to return."))
-	return styleBorder.Render(b.String())
+	return b.String()
 }

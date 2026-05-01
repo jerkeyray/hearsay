@@ -225,6 +225,12 @@ func (m interrogationModel) Update(msg tea.Msg) (interrogationModel, tea.Cmd, bo
 			m.focus = paneTopics
 		}
 		return m, nil, false, false
+	case "left", "h":
+		m.focus = paneTopics
+		return m, nil, false, false
+	case "right", "l":
+		m.focus = paneTechniques
+		return m, nil, false, false
 	case "up", "k":
 		switch m.focus {
 		case paneTopics:
@@ -283,24 +289,40 @@ func (m interrogationModel) View() string {
 	techs := m.renderTechniques()
 
 	bottom := lipgloss.JoinHorizontal(lipgloss.Top, topics, techs)
-	footer := styleDim.Render("enter ask · ↹ pane · r rewind · b branch · i inspector · d done · esc back · q quit")
+	footer := styleDim.Render("↑↓ choose · ←→ pane · enter ask · r rewind · b branch · i inspector · d done · esc back · q quit")
 
 	parts := []string{header, demeanor, "", dialogue, "", bottom, "", footer}
 	if m.lastErr != "" {
 		parts = append(parts, styleDim.Render("err: "+m.lastErr))
 	}
-	body := lipgloss.JoinVertical(lipgloss.Left, parts...)
-	return styleBorder.Render(body)
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
+
+// dialogueWindow is how many recent exchanges the dialogue pane
+// renders. Older turns are summarised with a "(N earlier turns)"
+// header so the topic + technique panes stay visible without
+// scrolling. The full history is always available via the inspector.
+const dialogueWindow = 6
 
 func (m interrogationModel) renderDialogue() string {
 	log := m.session.Log()
 	if len(log) == 0 && m.pending == nil {
 		return styleMuted.Render("(she's waiting.)")
 	}
+
+	start := 0
+	if len(log) > dialogueWindow {
+		start = len(log) - dialogueWindow
+	}
+
 	var b strings.Builder
-	for i, ex := range log {
-		if i > 0 {
+	if start > 0 {
+		fmt.Fprintf(&b, "%s\n\n",
+			styleMuted.Render(fmt.Sprintf("(%d earlier turns — open the inspector with i)", start)))
+	}
+	for i := start; i < len(log); i++ {
+		ex := log[i]
+		if i > start {
 			b.WriteString("\n\n")
 		}
 		fmt.Fprintf(&b, "%s\n", styleDim.Render(fmt.Sprintf("> you (%s, %s)", ex.Topic, ex.Technique.Label())))
@@ -317,27 +339,16 @@ func (m interrogationModel) renderDialogue() string {
 }
 
 func (m interrogationModel) renderTopics() string {
-	var header string
-	if m.focus == paneTopics {
-		header = styleSelected.Render("ASK ABOUT")
-	} else {
-		header = styleDim.Render("ASK ABOUT")
-	}
+	focused := m.focus == paneTopics
 	var b strings.Builder
-	b.WriteString(header)
+	if focused {
+		b.WriteString(styleTitle.Render("ASK ABOUT"))
+	} else {
+		b.WriteString(styleMuted.Render("ASK ABOUT"))
+	}
 	b.WriteString("\n")
 	for i, t := range m.session.VisibleTopics() {
-		var line string
-		if i == m.topicIdx {
-			if m.focus == paneTopics {
-				line = styleSelected.Render("▸ " + t.Name)
-			} else {
-				line = styleDim.Render("▸ " + t.Name)
-			}
-		} else {
-			line = styleMuted.Render("  " + t.Name)
-		}
-		b.WriteString(line)
+		b.WriteString(renderRow(t.Name, i == m.topicIdx, focused))
 		b.WriteString("\n")
 	}
 	return lipgloss.NewStyle().Width(28).Render(b.String())
@@ -383,29 +394,36 @@ func (m interrogationModel) renderRewindPicker() string {
 
 	b.WriteString("\n")
 	b.WriteString(styleDim.Render(hint))
-	return styleBorder.Render(b.String())
+	return b.String()
 }
 
 func (m interrogationModel) renderTechniques() string {
+	focused := m.focus == paneTechniques
 	var b strings.Builder
-	if m.focus == paneTechniques {
-		b.WriteString(styleSelected.Render("HOW"))
+	if focused {
+		b.WriteString(styleTitle.Render("HOW"))
 	} else {
-		b.WriteString(styleDim.Render("HOW"))
+		b.WriteString(styleMuted.Render("HOW"))
 	}
 	b.WriteString("\n")
 	for i, tech := range kase.AllTechniques {
-		label := tech.Label()
-		if i == m.techIdx {
-			if m.focus == paneTechniques {
-				b.WriteString(styleSelected.Render("▸ " + label))
-			} else {
-				b.WriteString(styleDim.Render("▸ " + label))
-			}
-		} else {
-			b.WriteString(styleMuted.Render("  " + label))
-		}
+		b.WriteString(renderRow(tech.Label(), i == m.techIdx, focused))
 		b.WriteString("\n")
 	}
 	return lipgloss.NewStyle().Width(28).Render(b.String())
+}
+
+// renderRow draws one option row inside a pane. Only the focused
+// pane shows the ▸ cursor; unfocused panes are flat lists. The
+// selected-but-unfocused item gets a quieter dot mark so the
+// player can see where they'll land when focus returns.
+func renderRow(label string, selected, focused bool) string {
+	switch {
+	case selected && focused:
+		return styleSelected.Render("▸ " + label)
+	case selected && !focused:
+		return styleDim.Render("· " + label)
+	default:
+		return styleMuted.Render("  " + label)
+	}
 }

@@ -22,3 +22,25 @@ var (
 			BorderForeground(colorMuted).
 			Padding(1, 2)
 )
+
+// frame wraps content in the standard hearsay border, sized to fill
+// width × height (the terminal size, in cells). Falls back to an
+// auto-sized border when dimensions are unknown (before the first
+// tea.WindowSizeMsg arrives).
+func frame(content string, width, height int) string {
+	s := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(colorMuted).
+		Padding(1, 2)
+	// Subtract 4 for the border (left+right) and the padding (left+right=4 chars).
+	// The lipgloss padding of (1,2) means 2-char horizontal pad on each side
+	// plus a 1-char border, total 6 — but lipgloss applies Width to the *content*
+	// area inside padding, so we just subtract the border + padding once.
+	if width > 6 {
+		s = s.Width(width - 6)
+	}
+	if height > 4 {
+		s = s.Height(height - 4)
+	}
+	return s.Render(content)
+}

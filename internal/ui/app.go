@@ -48,6 +48,10 @@ type model struct {
 	errMsg         string
 	placeholder    string
 	quitting       bool
+	// width and height track the terminal size from tea.WindowSizeMsg
+	// so the root frame fills the screen.
+	width  int
+	height int
 }
 
 // New constructs the root TUI model. makeDriver builds a fresh
@@ -70,6 +74,12 @@ func New(makeDriver DriverFactory, cases []kase.Case) tea.Model {
 func (m model) Init() tea.Cmd { return nil }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Track terminal size for the root frame.
+	if w, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width = w.Width
+		m.height = w.Height
+	}
+
 	// Help overlay: captures all keys while open.
 	if m.helpOpen {
 		next, cmd, done := m.help.Update(msg)
@@ -236,6 +246,13 @@ func (m model) View() string {
 	if m.quitting {
 		return ""
 	}
+	return frame(m.activeView(), m.width, m.height)
+}
+
+// activeView returns the raw (unframed) content of the currently
+// visible screen. The root View wraps it in a single terminal-sized
+// frame so the bordered chrome fills the whole window.
+func (m model) activeView() string {
 	if m.helpOpen {
 		return m.help.View()
 	}
@@ -253,12 +270,11 @@ func (m model) View() string {
 	case screenVerdict:
 		return m.verdict.View()
 	case screenError:
-		return styleBorder.Render(
-			styleTitle.Render("hearsay") + "\n\n" +
-				"could not start session:\n  " + m.errMsg + "\n\n" +
-				styleDim.Render("esc back · q quit"))
+		return styleTitle.Render("hearsay") + "\n\n" +
+			"could not start session:\n  " + m.errMsg + "\n\n" +
+			styleDim.Render("esc back · q quit")
 	case screenPlaceholder:
-		return styleBorder.Render(m.placeholder + "\n\n" + styleDim.Render("esc back · q quit"))
+		return m.placeholder + "\n\n" + styleDim.Render("esc back · q quit")
 	}
 	return ""
 }

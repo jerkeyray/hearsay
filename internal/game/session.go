@@ -27,10 +27,14 @@ type Budget struct {
 }
 
 // DefaultBudget mirrors witness.DefaultBudget for the session-level
-// view and is used when the caller does not provide one.
+// view and is used when the caller does not provide one. PRD §3.5
+// targeted 50k tokens / 30–60 turns; in practice that reads as
+// luxurious. We pin it to 3 minutes' worth of tells — about 15 asks
+// in stub mode, ~10–20 in live — which feels like the witness is
+// actually about to leave.
 var DefaultBudget = Budget{
-	MaxOutputTokens: 50_000,
-	MaxUSD:          0.40,
+	MaxOutputTokens: 3_000,
+	MaxUSD:          0.05,
 }
 
 // ErrSessionEnded is returned by Ask when the budget is exhausted.

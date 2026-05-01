@@ -35,6 +35,7 @@ Configuration is environment-only:
 | `MODEL` | `claude-sonnet-4-6` (anthropic) / `gpt-4o-mini` (openai) | Override per provider. |
 | `OPENAI_BASE_URL` | — | OpenAI-compatible gateway (Groq, etc.). |
 | `HEARSAY_HOME` | `~/.hearsay` | Where save files live. |
+| `HEARSAY_DEBUG` | unset | `1` enables structured slog → `$HEARSAY_HOME/debug.log` (info). `2` is debug-level. |
 
 If no key is set, the binary runs with a canned-line stub witness so you can
 explore the loop. The dryness brief and recall semantics need a real LLM.
@@ -74,6 +75,31 @@ internal/
 The architecture goal is that adding a new case is writing one Go file in
 `cases/<name>/case.go`. The engine never imports a specific case.
 
+## Watching the API calls
+
+Three angles:
+
+1. **In-game inspector.** Press `i` during interrogation. Every Starling
+   event is a row: `RunStarted`, `TurnStarted`, `ToolCallScheduled`,
+   `ToolCallCompleted`, `AssistantMessageCompleted`, `RunCompleted`. `enter`
+   expands a row to show seq, runID, timestamp, prev-hash, payload size.
+2. **Streaming text log.** Run with `HEARSAY_DEBUG=1` (info) or `2` (debug)
+   and tail the log in another terminal:
+   ```sh
+   HEARSAY_DEBUG=2 ANTHROPIC_API_KEY=... hearsay
+   # in another shell:
+   tail -f ~/.hearsay/debug.log
+   ```
+   You'll see Starling's per-step output: turn boundaries, tool calls,
+   token usage, budget tracking, terminal events.
+3. **Direct SQL.** The save file is plain SQLite:
+   ```sh
+   sqlite3 ~/.hearsay/saves/streetlight-*.db \
+     "SELECT seq, kind, length(payload) FROM events ORDER BY seq;"
+   ```
+   Payloads are canonical CBOR; decode with the `event` package
+   from Starling if you want the actual provider request/response.
+
 ## Saves
 
 One SQLite file per session at `~/.hearsay/saves/<case>-<sessionID>.db`. Branches
@@ -82,9 +108,12 @@ honest; the in-memory log is the "current timeline" the verdict scores against.
 
 ## Cost
 
-Default budget per case: 50,000 output tokens, $0.40. Anthropic prompt caching
-keeps the static system prompt cheap across turns. Expect $0.10–$0.40 per
-playthrough at default settings.
+Default budget per case: 3,000 output tokens, $0.05. The session clock maps
+1000 tokens to 1 minute, so the witness arrives offering you 3:00 — about
+10–20 asks in live mode, ~15 in stub. Anthropic prompt caching keeps the
+static system prompt cheap across turns; expect well under $0.05 per
+playthrough at default settings. Bump `DefaultBudget` in `internal/game/session.go`
+if you want a longer interrogation.
 
 ## Status
 
