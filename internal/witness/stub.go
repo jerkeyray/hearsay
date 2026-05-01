@@ -16,13 +16,24 @@ type StubDriver struct{}
 // NewStubDriver constructs a StubDriver.
 func NewStubDriver() *StubDriver { return &StubDriver{} }
 
-// Respond returns the canned line for (topic, technique). The
-// history argument is accepted for interface parity but ignored.
-func (d *StubDriver) Respond(_ context.Context, topic string, technique kase.Technique, _ []HistoryItem) (string, error) {
-	if line, ok := stubLines[stubKey{topic, technique}]; ok {
-		return line, nil
+// stubOutputTokensPerAsk is a synthetic deduction so the session
+// clock still ticks during dev runs without an API key. Calibrated
+// so a 50k-token session takes ~250 stub asks to exhaust — comfortably
+// more than any plausible playthrough.
+const stubOutputTokensPerAsk = 200
+
+// Respond returns the canned line for (topic, technique) plus a
+// synthetic token charge so the session clock animates in stub mode.
+// The history argument is accepted for interface parity but ignored.
+func (d *StubDriver) Respond(_ context.Context, topic string, technique kase.Technique, _ []HistoryItem) (Response, error) {
+	line := stubFallback[technique]
+	if v, ok := stubLines[stubKey{topic, technique}]; ok {
+		line = v
 	}
-	return stubFallback[technique], nil
+	return Response{
+		Text:         line,
+		OutputTokens: stubOutputTokensPerAsk,
+	}, nil
 }
 
 // Close is a no-op for StubDriver.

@@ -102,6 +102,7 @@ func (m interrogationModel) View() string {
 		lipgloss.Top,
 		styleTitle.Render("hearsay"),
 		styleDim.Render("  ·  "+m.session.Case.ID),
+		styleDim.Render("  ·  "+m.session.ClockDisplay()),
 	)
 
 	dialogue := m.renderDialogue()

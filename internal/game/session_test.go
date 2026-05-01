@@ -25,7 +25,7 @@ func TestSession_StubRoundTrip(t *testing.T) {
 
 	ctx := context.Background()
 	d := witness.NewStubDriver()
-	s, err := game.NewSession(ctx, c, d)
+	s, err := game.NewSession(ctx, c, d, game.Budget{MaxOutputTokens: 1000})
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}

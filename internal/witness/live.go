@@ -133,15 +133,21 @@ func newLiveDriver(p provider.Provider, model string, budget *starling.Budget, l
 }
 
 // Respond runs one starling.Agent.Run for the given (topic, technique)
-// pair and returns the witness's final line. The conversation history
-// is embedded in the user prompt so each Run is self-contained.
-func (d *LiveDriver) Respond(ctx context.Context, topic string, technique kase.Technique, history []HistoryItem) (string, error) {
+// pair and returns the witness's final line plus the usage numbers
+// from the run. The conversation history is embedded in the user
+// prompt so each Run is self-contained.
+func (d *LiveDriver) Respond(ctx context.Context, topic string, technique kase.Technique, history []HistoryItem) (Response, error) {
 	goal := UserPrompt(topic, technique, history)
 	res, err := d.agent.Run(ctx, goal)
 	if err != nil {
-		return "", err
+		return Response{}, err
 	}
-	return res.FinalText, nil
+	return Response{
+		Text:         res.FinalText,
+		InputTokens:  res.InputTokens,
+		OutputTokens: res.OutputTokens,
+		CostUSD:      res.TotalCostUSD,
+	}, nil
 }
 
 // Close releases the underlying event log.

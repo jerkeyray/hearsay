@@ -1,7 +1,8 @@
 // Package game owns the engine-side session state: the current case,
-// the conversation log, and the witness driver that produces each
-// turn. The driver is also the seam where the live LLM (M2.b) attaches
-// and where Starling event-log writes happen for live runs.
+// the conversation log, the witness driver that produces each turn,
+// and the per-session token budget. The driver is also the seam where
+// the live LLM attaches and where Starling event-log writes happen
+// for live runs.
 //
 // The UI holds cursor state and renders; the engine owns everything
 // that would survive a process restart.
@@ -9,39 +10,70 @@ package game
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/jerkeyray/hearsay/internal/kase"
 	"github.com/jerkeyray/hearsay/internal/witness"
 )
 
-// Exchange is one turn in the conversation: what the player asked and
-// what the witness said back.
+// Budget caps the session's total LLM consumption. Maps onto the
+// session clock the player sees in the interrogation header. Zero
+// values disable that axis. PRD §3.5.
+type Budget struct {
+	MaxOutputTokens int64
+	MaxUSD          float64
+}
+
+// DefaultBudget mirrors witness.DefaultBudget for the session-level
+// view and is used when the caller does not provide one.
+var DefaultBudget = Budget{
+	MaxOutputTokens: 50_000,
+	MaxUSD:          0.40,
+}
+
+// ErrSessionEnded is returned by Ask when the budget is exhausted.
+// The fictional reading is "the witness leaves" (PRD §2.3 / §3.5).
+var ErrSessionEnded = errors.New("the witness leaves")
+
+// Exchange is one turn in the conversation: what the player asked,
+// what the witness said back, and the usage that turn consumed.
 type Exchange struct {
-	Turn      int
-	Topic     string
-	Technique kase.Technique
-	Witness   string
+	Turn         int
+	Topic        string
+	Technique    kase.Technique
+	Witness      string
+	OutputTokens int64
+	CostUSD      float64
 }
 
 // Session is the per-case engine state. One Session per save file.
 type Session struct {
-	Case   kase.Case
-	driver witness.Driver
-	log    []Exchange
+	Case             kase.Case
+	driver           witness.Driver
+	log              []Exchange
+	budget           Budget
+	usedOutputTokens int64
+	usedCostUSD      float64
 }
 
-// NewSession constructs a session over a case + witness driver. The
-// session does not own the driver's resources — it relies on Close to
-// release them.
-func NewSession(_ context.Context, c kase.Case, d witness.Driver) (*Session, error) {
-	return &Session{Case: c, driver: d}, nil
+// NewSession constructs a session over a case + witness driver and
+// per-session budget. A zero Budget falls back to DefaultBudget. The
+// session does not own the driver's resources — Close releases them.
+func NewSession(_ context.Context, c kase.Case, d witness.Driver, b Budget) (*Session, error) {
+	if b.MaxOutputTokens == 0 && b.MaxUSD == 0 {
+		b = DefaultBudget
+	}
+	return &Session{Case: c, driver: d, budget: b}, nil
 }
 
-// Ask runs one turn: build the conversation history, ask the driver,
-// append the exchange. In the live path the driver writes Starling
-// events to its event log under a per-ask RunID; in the stub path the
-// driver is a pure function.
+// Ask runs one turn: build conversation history, invoke the driver,
+// accumulate usage, append the exchange. Returns ErrSessionEnded if
+// the budget is already exhausted.
 func (s *Session) Ask(ctx context.Context, topic string, technique kase.Technique) (Exchange, error) {
+	if s.budgetExhausted() {
+		return Exchange{}, ErrSessionEnded
+	}
 	hist := make([]witness.HistoryItem, 0, len(s.log))
 	for _, ex := range s.log {
 		hist = append(hist, witness.HistoryItem{
@@ -50,15 +82,19 @@ func (s *Session) Ask(ctx context.Context, topic string, technique kase.Techniqu
 			Witness:   ex.Witness,
 		})
 	}
-	line, err := s.driver.Respond(ctx, topic, technique, hist)
+	resp, err := s.driver.Respond(ctx, topic, technique, hist)
 	if err != nil {
 		return Exchange{}, err
 	}
+	s.usedOutputTokens += resp.OutputTokens
+	s.usedCostUSD += resp.CostUSD
 	ex := Exchange{
-		Turn:      len(s.log),
-		Topic:     topic,
-		Technique: technique,
-		Witness:   line,
+		Turn:         len(s.log),
+		Topic:        topic,
+		Technique:    technique,
+		Witness:      resp.Text,
+		OutputTokens: resp.OutputTokens,
+		CostUSD:      resp.CostUSD,
 	}
 	s.log = append(s.log, ex)
 	return ex, nil
@@ -79,3 +115,54 @@ func (s *Session) Log() []Exchange { return s.log }
 
 // TurnCount is the number of completed turns.
 func (s *Session) TurnCount() int { return len(s.log) }
+
+// Budget returns the session's caps.
+func (s *Session) Budget() Budget { return s.budget }
+
+// UsedOutputTokens is the cumulative output-token consumption across
+// all asks in this session.
+func (s *Session) UsedOutputTokens() int64 { return s.usedOutputTokens }
+
+// UsedCostUSD is the cumulative provider cost across all asks.
+func (s *Session) UsedCostUSD() float64 { return s.usedCostUSD }
+
+// RemainingOutputTokens reports how many output tokens are left
+// before the session ends. Returns 0 when exhausted, math.MaxInt64
+// when unbounded.
+func (s *Session) RemainingOutputTokens() int64 {
+	if s.budget.MaxOutputTokens <= 0 {
+		return int64(^uint64(0) >> 1) // unbounded → MaxInt64
+	}
+	r := s.budget.MaxOutputTokens - s.usedOutputTokens
+	if r < 0 {
+		return 0
+	}
+	return r
+}
+
+// SessionEnded reports whether the budget is exhausted.
+func (s *Session) SessionEnded() bool { return s.budgetExhausted() }
+
+// ClockDisplay formats remaining output tokens as a "minutes the
+// witness will give you" count-down. Mapping is 1000 tokens =
+// 1 minute (so a 50k budget = 50:00 starting). PRD §3.5: "47:00".
+// Returns "—:—" when the budget is unbounded.
+func (s *Session) ClockDisplay() string {
+	if s.budget.MaxOutputTokens <= 0 {
+		return "—:—"
+	}
+	remaining := s.RemainingOutputTokens()
+	mins := remaining / 1000
+	secs := (remaining % 1000) * 60 / 1000
+	return fmt.Sprintf("%d:%02d", mins, secs)
+}
+
+func (s *Session) budgetExhausted() bool {
+	if s.budget.MaxOutputTokens > 0 && s.usedOutputTokens >= s.budget.MaxOutputTokens {
+		return true
+	}
+	if s.budget.MaxUSD > 0 && s.usedCostUSD >= s.budget.MaxUSD {
+		return true
+	}
+	return false
+}

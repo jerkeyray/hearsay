@@ -100,7 +100,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.screen = screenError
 				return m, nil
 			}
-			session, err := game.NewSession(ctx, streetlight.Case, driver)
+			session, err := game.NewSession(ctx, streetlight.Case, driver, game.DefaultBudget)
 			if err != nil {
 				_ = driver.Close()
 				m.errMsg = err.Error()

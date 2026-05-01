@@ -79,8 +79,11 @@ func TestLiveDriver_RoundTripSQLite(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Respond %d: %v", i, err)
 		}
-		if got != "she pauses." {
-			t.Errorf("Respond %d text = %q, want %q", i, got, "she pauses.")
+		if got.Text != "she pauses." {
+			t.Errorf("Respond %d text = %q, want %q", i, got.Text, "she pauses.")
+		}
+		if got.OutputTokens != 10 {
+			t.Errorf("Respond %d OutputTokens = %d, want 10 (scripted usage)", i, got.OutputTokens)
 		}
 	}
 
