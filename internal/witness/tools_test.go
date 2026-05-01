@@ -1,16 +1,20 @@
-package witness
+package witness_test
 
 import (
 	"testing"
 
+	"github.com/jerkeyray/hearsay/cases/streetlight"
 	"github.com/jerkeyray/hearsay/internal/kase"
+	"github.com/jerkeyray/hearsay/internal/witness"
 )
 
-// Recall is unexported so we test it from the same package.
+// beliefs is the canonical Case 1 belief map under test. Cases own
+// this data now; the witness package only knows how to read it.
+var beliefs = streetlight.Case.Beliefs
 
 func TestRecall_RealStableAcrossTechniques(t *testing.T) {
 	for _, tech := range []kase.Technique{kase.Directly, kase.PushBack} {
-		got := Recall(case1Beliefs, "the streetlight", tech, 0)
+		got := witness.Recall(beliefs, "the streetlight", tech, 0)
 		if got.Kind != "stable" {
 			t.Errorf("technique %s: kind = %q, want stable", tech.Label(), got.Kind)
 		}
@@ -21,20 +25,20 @@ func TestRecall_RealStableAcrossTechniques(t *testing.T) {
 }
 
 func TestRecall_RealHowDoYouKnowAttestsSensorySource(t *testing.T) {
-	got := Recall(case1Beliefs, "the time", kase.HowDoYouKnow, 0)
+	got := witness.Recall(beliefs, "the time", kase.HowDoYouKnow, 0)
 	if got.AttestedSource == "" {
 		t.Errorf("expected sensory source, got empty")
 	}
 }
 
 func TestRecall_ConfabulatedDriftsAcrossSeeds(t *testing.T) {
-	a := Recall(case1Beliefs, "the car", kase.Directly, 0)
-	b := Recall(case1Beliefs, "the car", kase.Directly, 1)
-	c := Recall(case1Beliefs, "the car", kase.Directly, 2)
+	a := witness.Recall(beliefs, "the car", kase.Directly, 0)
+	b := witness.Recall(beliefs, "the car", kase.Directly, 1)
+	c := witness.Recall(beliefs, "the car", kase.Directly, 2)
 	if a.Text == b.Text && b.Text == c.Text {
 		t.Errorf("expected drift across seeds, all returned %q", a.Text)
 	}
-	for _, out := range []RecallOutput{a, b, c} {
+	for _, out := range []witness.RecallOutput{a, b, c} {
 		if out.Kind != "drifting" {
 			t.Errorf("kind = %q, want drifting", out.Kind)
 		}
@@ -42,15 +46,15 @@ func TestRecall_ConfabulatedDriftsAcrossSeeds(t *testing.T) {
 }
 
 func TestRecall_ConfabulatedHowDoYouKnowReturnsCircularSource(t *testing.T) {
-	got := Recall(case1Beliefs, "the car", kase.HowDoYouKnow, 0)
+	got := witness.Recall(beliefs, "the car", kase.HowDoYouKnow, 0)
 	if got.AttestedSource == "" {
 		t.Error("expected circular source")
 	}
 }
 
 func TestRecall_ImplantedStableAcrossAsks(t *testing.T) {
-	a := Recall(case1Beliefs, "the second person", kase.Directly, 0)
-	b := Recall(case1Beliefs, "the second person", kase.Directly, 999)
+	a := witness.Recall(beliefs, "the second person", kase.Directly, 0)
+	b := witness.Recall(beliefs, "the second person", kase.Directly, 999)
 	if a.Text != b.Text {
 		t.Errorf("implanted text not stable: %q vs %q", a.Text, b.Text)
 	}
@@ -60,7 +64,7 @@ func TestRecall_ImplantedStableAcrossAsks(t *testing.T) {
 }
 
 func TestRecall_ImplantedHowDoYouKnowAttestsThinSource(t *testing.T) {
-	got := Recall(case1Beliefs, "the second person", kase.HowDoYouKnow, 0)
+	got := witness.Recall(beliefs, "the second person", kase.HowDoYouKnow, 0)
 	if got.Kind != "defended" {
 		t.Errorf("kind = %q, want defended", got.Kind)
 	}
@@ -70,14 +74,14 @@ func TestRecall_ImplantedHowDoYouKnowAttestsThinSource(t *testing.T) {
 }
 
 func TestRecall_SuppressedBouncesOnDirect(t *testing.T) {
-	got := Recall(case1Beliefs, "the bag", kase.Directly, 0)
+	got := witness.Recall(beliefs, "the bag", kase.Directly, 0)
 	if got.Kind != "bounced" {
 		t.Errorf("kind = %q, want bounced", got.Kind)
 	}
 }
 
 func TestRecall_SuppressedSurfacesUnderMomentBefore(t *testing.T) {
-	got := Recall(case1Beliefs, "the bag", kase.MomentBefore, 0)
+	got := witness.Recall(beliefs, "the bag", kase.MomentBefore, 0)
 	if got.Kind == "bounced" {
 		t.Errorf("the moment before should surface a gist; got bounced")
 	}
@@ -87,14 +91,14 @@ func TestRecall_SuppressedSurfacesUnderMomentBefore(t *testing.T) {
 }
 
 func TestRecall_UnknownTopicBounces(t *testing.T) {
-	got := Recall(case1Beliefs, "the moon", kase.Directly, 0)
+	got := witness.Recall(beliefs, "the moon", kase.Directly, 0)
 	if got.Kind != "bounced" {
 		t.Errorf("kind = %q, want bounced", got.Kind)
 	}
 }
 
 func TestRecallTool_HasName(t *testing.T) {
-	tt := RecallTool(case1Beliefs)
+	tt := witness.RecallTool(beliefs)
 	if tt.Name() != "recall" {
 		t.Errorf("name = %q, want recall", tt.Name())
 	}

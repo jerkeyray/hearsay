@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/jerkeyray/starling"
@@ -92,58 +93,91 @@ func NewLiveProviderFromEnv() (*LiveProvider, error) {
 }
 
 // NewDriver opens a per-session SQLite event log at savePath and
-// returns a LiveDriver that will write all run events into it. The
+// returns a LiveDriver wired to the given case's beliefs. The
 // returned driver owns the event log; Close releases it.
-func (p *LiveProvider) NewDriver(savePath string) (*LiveDriver, error) {
+func (p *LiveProvider) NewDriver(savePath string, c kase.Case) (*LiveDriver, error) {
 	log, err := eventlog.NewSQLite(savePath)
 	if err != nil {
 		return nil, fmt.Errorf("open event log: %w", err)
 	}
-	return newLiveDriver(p.Provider, p.Model, p.Budget, log), nil
+	return newLiveDriver(p.Provider, p.Model, p.Budget, log, c.Beliefs), nil
 }
 
 // LiveDriver runs a starling.Agent per ask against a real (or scripted)
 // provider, writing events to a per-session SQLite log. Each Respond
-// invocation mints a fresh RunID; all runs share the underlying log.
+// invocation builds a fresh agent so the per-ask demeanor sink is
+// isolated; all runs share the underlying event log.
 type LiveDriver struct {
-	agent *starling.Agent
-	log   eventlog.EventLog
+	provider provider.Provider
+	model    string
+	budget   *starling.Budget
+	log      eventlog.EventLog
+	beliefs  map[string]kase.Belief
 }
 
 // NewLiveDriverWith is a low-level constructor used by tests with a
 // scripted provider and an in-memory event log. Production code uses
 // LiveProvider.NewDriver.
-func NewLiveDriverWith(p provider.Provider, model string, budget *starling.Budget, log eventlog.EventLog) *LiveDriver {
-	return newLiveDriver(p, model, budget, log)
+func NewLiveDriverWith(p provider.Provider, model string, budget *starling.Budget, log eventlog.EventLog, beliefs map[string]kase.Belief) *LiveDriver {
+	return newLiveDriver(p, model, budget, log, beliefs)
 }
 
-func newLiveDriver(p provider.Provider, model string, budget *starling.Budget, log eventlog.EventLog) *LiveDriver {
-	a := &starling.Agent{
-		Provider: p,
-		Tools:    []tool.Tool{RecallTool(case1Beliefs)},
-		Log:      log,
-		Budget:   budget,
+func newLiveDriver(p provider.Provider, model string, budget *starling.Budget, log eventlog.EventLog, beliefs map[string]kase.Belief) *LiveDriver {
+	return &LiveDriver{
+		provider: p,
+		model:    model,
+		budget:   budget,
+		log:      log,
+		beliefs:  beliefs,
+	}
+}
+
+// Respond runs one starling.Agent.Run for the given (topic, technique)
+// pair and returns the witness's final line, any demeanor the model
+// signalled, and the usage numbers from the run. The conversation
+// history is embedded in the user prompt so each Run is self-contained.
+func (d *LiveDriver) Respond(ctx context.Context, topic string, technique kase.Technique, history []HistoryItem) (Response, error) {
+	// Per-ask sink for note_demeanor. The closure runs on whichever
+	// goroutine the agent's tool executor uses; a mutex keeps the
+	// write/read pair safe.
+	var (
+		mu       sync.Mutex
+		demeanor kase.Demeanor
+	)
+	setDemeanor := func(s kase.Demeanor) {
+		mu.Lock()
+		demeanor = s
+		mu.Unlock()
+	}
+
+	agent := &starling.Agent{
+		Provider: d.provider,
+		Tools: []tool.Tool{
+			RecallTool(d.beliefs),
+			DemeanorTool(setDemeanor),
+		},
+		Log:    d.log,
+		Budget: d.budget,
 		Config: starling.Config{
-			Model:        model,
+			Model:        d.model,
 			SystemPrompt: SystemPrompt,
 			MaxTurns:     4,
 		},
 	}
-	return &LiveDriver{agent: a, log: log}
-}
 
-// Respond runs one starling.Agent.Run for the given (topic, technique)
-// pair and returns the witness's final line plus the usage numbers
-// from the run. The conversation history is embedded in the user
-// prompt so each Run is self-contained.
-func (d *LiveDriver) Respond(ctx context.Context, topic string, technique kase.Technique, history []HistoryItem) (Response, error) {
 	goal := UserPrompt(topic, technique, history)
-	res, err := d.agent.Run(ctx, goal)
+	res, err := agent.Run(ctx, goal)
 	if err != nil {
 		return Response{}, err
 	}
+
+	mu.Lock()
+	d2 := demeanor
+	mu.Unlock()
+
 	return Response{
 		Text:         res.FinalText,
+		Demeanor:     d2,
 		InputTokens:  res.InputTokens,
 		OutputTokens: res.OutputTokens,
 		CostUSD:      res.TotalCostUSD,

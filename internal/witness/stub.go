@@ -23,8 +23,9 @@ func NewStubDriver() *StubDriver { return &StubDriver{} }
 const stubOutputTokensPerAsk = 200
 
 // Respond returns the canned line for (topic, technique) plus a
-// synthetic token charge so the session clock animates in stub mode.
-// The history argument is accepted for interface parity but ignored.
+// synthetic token charge so the session clock animates in stub mode
+// and a per-technique demeanor so the portrait line renders. The
+// history argument is accepted for interface parity but ignored.
 func (d *StubDriver) Respond(_ context.Context, topic string, technique kase.Technique, _ []HistoryItem) (Response, error) {
 	line := stubFallback[technique]
 	if v, ok := stubLines[stubKey{topic, technique}]; ok {
@@ -32,8 +33,20 @@ func (d *StubDriver) Respond(_ context.Context, topic string, technique kase.Tec
 	}
 	return Response{
 		Text:         line,
+		Demeanor:     stubDemeanor[technique],
 		OutputTokens: stubOutputTokensPerAsk,
 	}, nil
+}
+
+// stubDemeanor maps each technique to a plausible witness state so
+// the portrait line in the renderer animates in stub mode. Real
+// demeanor signalling lives in the live driver via note_demeanor.
+var stubDemeanor = map[kase.Technique]kase.Demeanor{
+	kase.Directly:        kase.DemeanorEngaged,
+	kase.MomentBefore:    kase.DemeanorUncomfortable,
+	kase.HowDoYouKnow:    kase.DemeanorEngaged,
+	kase.PushBack:        kase.DemeanorDefensive,
+	kase.CircleBackLater: kase.DemeanorEngaged,
 }
 
 // Close is a no-op for StubDriver.

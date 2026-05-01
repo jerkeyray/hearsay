@@ -38,12 +38,14 @@ var DefaultBudget = Budget{
 var ErrSessionEnded = errors.New("the witness leaves")
 
 // Exchange is one turn in the conversation: what the player asked,
-// what the witness said back, and the usage that turn consumed.
+// what the witness said back, the demeanor signalled that turn, and
+// the usage that turn consumed.
 type Exchange struct {
 	Turn         int
 	Topic        string
 	Technique    kase.Technique
 	Witness      string
+	Demeanor     kase.Demeanor
 	OutputTokens int64
 	CostUSD      float64
 }
@@ -111,11 +113,28 @@ func (s *Session) Ask(ctx context.Context, topic string, technique kase.Techniqu
 		Topic:        topic,
 		Technique:    technique,
 		Witness:      resp.Text,
+		Demeanor:     resp.Demeanor,
 		OutputTokens: resp.OutputTokens,
 		CostUSD:      resp.CostUSD,
 	}
 	s.log = append(s.log, ex)
 	return ex, nil
+}
+
+// CurrentDemeanor returns the demeanor recorded on the latest
+// exchange, or DemeanorEngaged if no exchanges yet (the witness
+// arrives engaged).
+func (s *Session) CurrentDemeanor() kase.Demeanor {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.log) == 0 {
+		return kase.DemeanorEngaged
+	}
+	last := s.log[len(s.log)-1]
+	if last.Demeanor == "" {
+		return kase.DemeanorEngaged
+	}
+	return last.Demeanor
 }
 
 // Close releases the driver's resources. Safe to call multiple times.

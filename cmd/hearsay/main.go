@@ -36,7 +36,7 @@ func buildDriverFactory() (ui.DriverFactory, string) {
 			return witness.NewStubDriver(), nil
 		}, "hearsay: " + err.Error() + "; using stub witness"
 	}
-	return func(_ context.Context, _ kase.Case, savePath string) (witness.Driver, error) {
-		return live.NewDriver(savePath)
+	return func(_ context.Context, c kase.Case, savePath string) (witness.Driver, error) {
+		return live.NewDriver(savePath, c)
 	}, ""
 }

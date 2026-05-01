@@ -1,10 +1,11 @@
+// Package streetlight is the declarative content for Case 1.
+// Adding a case is writing one of these files; no engine changes.
 package streetlight
 
 import "github.com/jerkeyray/hearsay/internal/kase"
 
-// Case is the M1 stub of Case 1. Only the briefing copy is populated; the
-// locked truth, beliefs, topic graph, reconstruction form, and rubric land
-// in M3 once the engine knows what to do with them.
+// Case is Case 1: The Streetlight. PRD §5.4. Locked truth,
+// reconstruction form, and scoring rubric land in steps 18–19.
 var Case = kase.Case{
 	ID:    "streetlight",
 	Title: "Hearsay — Case 1: The Streetlight",
@@ -22,5 +23,45 @@ Ask carefully. Memory is not a recording.`,
 		{Name: "the bag", InitiallyVisible: true},
 		{Name: "the time", InitiallyVisible: true},
 		{Name: "the limp", InitiallyVisible: true},
+	},
+	Beliefs: map[string]kase.Belief{
+		"the streetlight": {
+			Kind:          kase.Real,
+			Canonical:     "orange. sodium. the kind that turns blood black.",
+			SensorySource: "I could see by it. it tinted everything.",
+		},
+		"the time": {
+			Kind:          kase.Real,
+			Canonical:     "11:47.",
+			SensorySource: "I looked at my phone after.",
+		},
+		"the car": {
+			Kind: kase.Confabulated,
+			Drift: []string{
+				"red. like a fire engine.",
+				"dark. dark blue, maybe.",
+				"black. or it looked black.",
+			},
+			Circular: "the streetlight was orange. so it must have been red.",
+		},
+		"the limp": {
+			Kind: kase.Confabulated,
+			Drift: []string{
+				"left leg.",
+				"right leg.",
+				"I couldn't tell which side.",
+			},
+			Circular: "he was just walking strangely.",
+		},
+		"the second person": {
+			Kind:       kase.Implanted,
+			Stable:     "a woman. in a coat. she was waiting for him.",
+			ThinSource: "I saw her. clearly.",
+		},
+		"the bag": {
+			Kind:   kase.Suppressed,
+			Bounce: "I didn't really see what was in it.",
+			Gist:   "I think I heard something heavy.",
+		},
 	},
 }

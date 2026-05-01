@@ -11,6 +11,7 @@ import (
 	"github.com/jerkeyray/starling/eventlog"
 	"github.com/jerkeyray/starling/provider"
 
+	"github.com/jerkeyray/hearsay/cases/streetlight"
 	"github.com/jerkeyray/hearsay/internal/kase"
 	"github.com/jerkeyray/hearsay/internal/witness"
 )
@@ -70,7 +71,7 @@ func TestLiveDriver_RoundTripSQLite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open log: %v", err)
 	}
-	d := witness.NewLiveDriverWith(prov, "test-model", nil, log)
+	d := witness.NewLiveDriverWith(prov, "test-model", nil, log, streetlight.Case.Beliefs)
 	defer d.Close()
 
 	ctx := context.Background()

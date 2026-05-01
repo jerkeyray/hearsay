@@ -26,10 +26,12 @@ type Driver interface {
 	Close() error
 }
 
-// Response is one turn's output: the witness's line plus the usage
-// numbers Session uses to drive the session clock.
+// Response is one turn's output: the witness's line, the demeanor
+// the model signalled (if any), plus the usage numbers Session uses
+// to drive the session clock.
 type Response struct {
 	Text         string
+	Demeanor     kase.Demeanor
 	InputTokens  int64
 	OutputTokens int64
 	CostUSD      float64

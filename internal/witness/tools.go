@@ -29,82 +29,10 @@ type RecallOutput struct {
 	AttestedSource string  `json:"attested_source,omitempty"`
 }
 
-// beliefKind is the engine-side memory classification (PRD §3.1). The
-// model never sees this — it only sees the behavioral RecallOutput.Kind.
-type beliefKind int
-
-const (
-	kindReal beliefKind = iota
-	kindConfabulated
-	kindImplanted
-	kindSuppressed
-)
-
-// belief is the M2 belief-table entry. M3 will move this into kase.Case
-// as a proper field so cases are content-only.
-type belief struct {
-	kind          beliefKind
-	canonical     string   // real: stable text
-	drift         []string // confabulated: variants picked per ask
-	stable        string   // implanted: verbatim phrasing every ask
-	bounce        string   // suppressed: deflection on direct ask
-	gist          string   // suppressed: surfaces under "the moment before"
-	sensorySource string   // real: how do you know
-	thinSource    string   // implanted: how do you know (looks thin)
-	circular      string   // confabulated: how do you know (circular)
-}
-
-// case1Beliefs is the hardcoded Case 1 belief table. PRD §5.4.
-// M3 moves this into cases/streetlight/case.go.
-var case1Beliefs = map[string]belief{
-	"the streetlight": {
-		kind:          kindReal,
-		canonical:     "orange. sodium. the kind that turns blood black.",
-		sensorySource: "I could see by it. it tinted everything.",
-	},
-	"the time": {
-		kind:          kindReal,
-		canonical:     "11:47.",
-		sensorySource: "I looked at my phone after.",
-	},
-	"the car": {
-		kind: kindConfabulated,
-		drift: []string{
-			"red. like a fire engine.",
-			"dark. dark blue, maybe.",
-			"black. or it looked black.",
-		},
-		circular: "the streetlight was orange. so it must have been red.",
-	},
-	"the limp": {
-		kind: kindConfabulated,
-		drift: []string{
-			"left leg.",
-			"right leg.",
-			"I couldn't tell which side.",
-		},
-		circular: "he was just walking strangely.",
-	},
-	"the second person": {
-		kind:       kindImplanted,
-		stable:     "a woman. in a coat. she was waiting for him.",
-		thinSource: "I saw her. clearly.",
-	},
-	"the bag": {
-		kind:   kindSuppressed,
-		bounce: "I didn't really see what was in it.",
-		gist:   "I think I heard something heavy.",
-	},
-}
-
-// Case1Beliefs exposes the hardcoded Case 1 table. M3 deletes this in
-// favor of the case file.
-func Case1Beliefs() map[string]belief { return case1Beliefs }
-
 // Recall is the pure logic of the recall tool. Returns the behavioral
 // signal the model uses to write the witness's line. rng is consumed
 // only for confabulated drift; pass any value for stable kinds.
-func Recall(beliefs map[string]belief, topic string, technique kase.Technique, rng uint64) RecallOutput {
+func Recall(beliefs map[string]kase.Belief, topic string, technique kase.Technique, rng uint64) RecallOutput {
 	b, ok := beliefs[topic]
 	if !ok {
 		return RecallOutput{
@@ -113,72 +41,110 @@ func Recall(beliefs map[string]belief, topic string, technique kase.Technique, r
 			Confidence: 0.1,
 		}
 	}
-	switch b.kind {
-	case kindReal:
+	switch b.Kind {
+	case kase.Real:
 		return recallReal(b, technique)
-	case kindConfabulated:
+	case kase.Confabulated:
 		return recallConfabulated(b, technique, rng)
-	case kindImplanted:
+	case kase.Implanted:
 		return recallImplanted(b, technique)
-	case kindSuppressed:
+	case kase.Suppressed:
 		return recallSuppressed(b, technique)
 	}
 	return RecallOutput{Kind: "bounced"}
 }
 
-func recallReal(b belief, technique kase.Technique) RecallOutput {
-	out := RecallOutput{Kind: "stable", Text: b.canonical, Confidence: 0.9}
+func recallReal(b kase.Belief, technique kase.Technique) RecallOutput {
+	out := RecallOutput{Kind: "stable", Text: b.Canonical, Confidence: 0.9}
 	if technique == kase.HowDoYouKnow {
-		out.AttestedSource = b.sensorySource
+		out.AttestedSource = b.SensorySource
 	}
 	return out
 }
 
-func recallConfabulated(b belief, technique kase.Technique, rng uint64) RecallOutput {
-	pick := b.drift[int(rng%uint64(len(b.drift)))]
+func recallConfabulated(b kase.Belief, technique kase.Technique, rng uint64) RecallOutput {
+	if len(b.Drift) == 0 {
+		return RecallOutput{Kind: "drifting", Text: "", Confidence: 0.3}
+	}
+	pick := b.Drift[int(rng%uint64(len(b.Drift)))]
 	switch technique {
 	case kase.HowDoYouKnow:
-		return RecallOutput{Kind: "drifting", Text: pick, Confidence: 0.5, AttestedSource: b.circular}
+		return RecallOutput{Kind: "drifting", Text: pick, Confidence: 0.5, AttestedSource: b.Circular}
 	case kase.PushBack:
 		// Push back makes confabulations drift further: pick a different variant.
-		alt := b.drift[int((rng+1)%uint64(len(b.drift)))]
+		alt := b.Drift[int((rng+1)%uint64(len(b.Drift)))]
 		return RecallOutput{Kind: "drifting", Text: alt, Confidence: 0.4}
 	default:
 		return RecallOutput{Kind: "drifting", Text: pick, Confidence: 0.5}
 	}
 }
 
-func recallImplanted(b belief, technique kase.Technique) RecallOutput {
+func recallImplanted(b kase.Belief, technique kase.Technique) RecallOutput {
 	switch technique {
 	case kase.HowDoYouKnow:
 		return RecallOutput{
 			Kind:           "defended",
-			Text:           b.stable,
+			Text:           b.Stable,
 			Confidence:     0.95,
-			AttestedSource: b.thinSource,
+			AttestedSource: b.ThinSource,
 		}
 	case kase.PushBack:
-		return RecallOutput{Kind: "defended", Text: b.stable, Confidence: 0.97}
+		return RecallOutput{Kind: "defended", Text: b.Stable, Confidence: 0.97}
 	default:
-		return RecallOutput{Kind: "stable", Text: b.stable, Confidence: 0.9}
+		return RecallOutput{Kind: "stable", Text: b.Stable, Confidence: 0.9}
 	}
 }
 
-func recallSuppressed(b belief, technique kase.Technique) RecallOutput {
+func recallSuppressed(b kase.Belief, technique kase.Technique) RecallOutput {
 	switch technique {
 	case kase.MomentBefore:
-		return RecallOutput{Kind: "drifting", Text: b.gist, Confidence: 0.4}
+		return RecallOutput{Kind: "drifting", Text: b.Gist, Confidence: 0.4}
 	case kase.HowDoYouKnow:
-		return RecallOutput{Kind: "drifting", Text: b.gist, Confidence: 0.3}
+		return RecallOutput{Kind: "drifting", Text: b.Gist, Confidence: 0.3}
 	default:
-		return RecallOutput{Kind: "bounced", Text: b.bounce, Confidence: 0.2}
+		return RecallOutput{Kind: "bounced", Text: b.Bounce, Confidence: 0.2}
 	}
+}
+
+// DemeanorInput is the JSON shape passed to note_demeanor. The model
+// picks one of: engaged, uncomfortable, defensive, tired.
+type DemeanorInput struct {
+	State string `json:"state" jsonschema:"description=Witness demeanor — one of: engaged, uncomfortable, defensive, tired."`
+}
+
+// DemeanorOutput is a trivial ack so the model knows the signal
+// landed.
+type DemeanorOutput struct {
+	Ack bool `json:"ack"`
+}
+
+// DemeanorTool returns the note_demeanor tool. set is invoked
+// synchronously inside the tool call with the parsed Demeanor;
+// callers typically wire it to a per-ask sink they read after Run.
+func DemeanorTool(set func(kase.Demeanor)) tool.Tool {
+	return tool.Typed(
+		"note_demeanor",
+		"Signal the witness's current demeanor. Call this when the "+
+			"witness's visible state shifts during your line — when the "+
+			"player's question has destabilized, defended, fatigued, or "+
+			"steadied them. State must be one of: engaged, uncomfortable, "+
+			"defensive, tired. The renderer uses this to update the "+
+			"witness portrait; you cannot describe demeanor in your line.",
+		func(_ context.Context, in DemeanorInput) (DemeanorOutput, error) {
+			d, ok := kase.ParseDemeanor(in.State)
+			if !ok {
+				return DemeanorOutput{}, fmt.Errorf("unknown demeanor %q", in.State)
+			}
+			set(d)
+			return DemeanorOutput{Ack: true}, nil
+		},
+	)
 }
 
 // RecallTool returns a Starling tool wrapping Recall. It calls
 // step.Random for drift selection so replays reproduce the same
 // pick from the recorded SideEffectRecorded event.
-func RecallTool(beliefs map[string]belief) tool.Tool {
+func RecallTool(beliefs map[string]kase.Belief) tool.Tool {
 	return tool.Typed(
 		"recall",
 		"Consult the witness's memory for a topic + technique pair. "+

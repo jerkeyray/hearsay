@@ -144,6 +144,8 @@ func (m interrogationModel) View() string {
 		styleDim.Render("  ·  "+m.session.ClockDisplay()),
 	)
 
+	demeanor := styleMuted.Render("she is " + string(m.session.CurrentDemeanor()) + ".")
+
 	dialogue := m.renderDialogue()
 	topics := m.renderTopics()
 	techs := m.renderTechniques()
@@ -151,7 +153,7 @@ func (m interrogationModel) View() string {
 	bottom := lipgloss.JoinHorizontal(lipgloss.Top, topics, techs)
 	footer := styleDim.Render("enter ask · ↹ switch panel · esc back · q quit")
 
-	parts := []string{header, "", dialogue, "", bottom, "", footer}
+	parts := []string{header, demeanor, "", dialogue, "", bottom, "", footer}
 	if m.lastErr != "" {
 		parts = append(parts, styleDim.Render("err: "+m.lastErr))
 	}
