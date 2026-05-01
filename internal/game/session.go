@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/jerkeyray/hearsay/internal/kase"
 	"github.com/jerkeyray/hearsay/internal/witness"
@@ -48,9 +49,15 @@ type Exchange struct {
 }
 
 // Session is the per-case engine state. One Session per save file.
+//
+// Session is safe for concurrent access: Bubble Tea runs Ask off the
+// main loop via tea.Cmd while View renders on the main loop. mu
+// guards every field below it.
 type Session struct {
-	Case             kase.Case
-	driver           witness.Driver
+	Case   kase.Case
+	driver witness.Driver
+
+	mu               sync.RWMutex
 	log              []Exchange
 	budget           Budget
 	usedOutputTokens int64
@@ -69,9 +76,15 @@ func NewSession(_ context.Context, c kase.Case, d witness.Driver, b Budget) (*Se
 
 // Ask runs one turn: build conversation history, invoke the driver,
 // accumulate usage, append the exchange. Returns ErrSessionEnded if
-// the budget is already exhausted.
+// the budget is already exhausted. Safe to call concurrently with
+// reading methods (Log, RemainingOutputTokens, ClockDisplay, etc.).
 func (s *Session) Ask(ctx context.Context, topic string, technique kase.Technique) (Exchange, error) {
+	// Snapshot the history under the read lock. Releasing before the
+	// driver call lets the View render the existing log while the LLM
+	// is in flight.
+	s.mu.RLock()
 	if s.budgetExhausted() {
+		s.mu.RUnlock()
 		return Exchange{}, ErrSessionEnded
 	}
 	hist := make([]witness.HistoryItem, 0, len(s.log))
@@ -82,10 +95,15 @@ func (s *Session) Ask(ctx context.Context, topic string, technique kase.Techniqu
 			Witness:   ex.Witness,
 		})
 	}
+	s.mu.RUnlock()
+
 	resp, err := s.driver.Respond(ctx, topic, technique, hist)
 	if err != nil {
 		return Exchange{}, err
 	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.usedOutputTokens += resp.OutputTokens
 	s.usedCostUSD += resp.CostUSD
 	ex := Exchange{
@@ -110,26 +128,55 @@ func (s *Session) Close(_ context.Context) error {
 	return err
 }
 
-// Log returns the exchanges in order. Read-only view for renderers.
-func (s *Session) Log() []Exchange { return s.log }
+// Log returns a copy of the exchanges in order. Safe to call
+// concurrently with Ask.
+func (s *Session) Log() []Exchange {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]Exchange, len(s.log))
+	copy(out, s.log)
+	return out
+}
 
 // TurnCount is the number of completed turns.
-func (s *Session) TurnCount() int { return len(s.log) }
+func (s *Session) TurnCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.log)
+}
 
 // Budget returns the session's caps.
-func (s *Session) Budget() Budget { return s.budget }
+func (s *Session) Budget() Budget {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.budget
+}
 
 // UsedOutputTokens is the cumulative output-token consumption across
 // all asks in this session.
-func (s *Session) UsedOutputTokens() int64 { return s.usedOutputTokens }
+func (s *Session) UsedOutputTokens() int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.usedOutputTokens
+}
 
 // UsedCostUSD is the cumulative provider cost across all asks.
-func (s *Session) UsedCostUSD() float64 { return s.usedCostUSD }
+func (s *Session) UsedCostUSD() float64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.usedCostUSD
+}
 
 // RemainingOutputTokens reports how many output tokens are left
 // before the session ends. Returns 0 when exhausted, math.MaxInt64
 // when unbounded.
 func (s *Session) RemainingOutputTokens() int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.remainingOutputTokensLocked()
+}
+
+func (s *Session) remainingOutputTokensLocked() int64 {
 	if s.budget.MaxOutputTokens <= 0 {
 		return int64(^uint64(0) >> 1) // unbounded → MaxInt64
 	}
@@ -141,22 +188,30 @@ func (s *Session) RemainingOutputTokens() int64 {
 }
 
 // SessionEnded reports whether the budget is exhausted.
-func (s *Session) SessionEnded() bool { return s.budgetExhausted() }
+func (s *Session) SessionEnded() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.budgetExhausted()
+}
 
 // ClockDisplay formats remaining output tokens as a "minutes the
 // witness will give you" count-down. Mapping is 1000 tokens =
 // 1 minute (so a 50k budget = 50:00 starting). PRD §3.5: "47:00".
 // Returns "—:—" when the budget is unbounded.
 func (s *Session) ClockDisplay() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if s.budget.MaxOutputTokens <= 0 {
 		return "—:—"
 	}
-	remaining := s.RemainingOutputTokens()
+	remaining := s.remainingOutputTokensLocked()
 	mins := remaining / 1000
 	secs := (remaining % 1000) * 60 / 1000
 	return fmt.Sprintf("%d:%02d", mins, secs)
 }
 
+// budgetExhausted is the lock-free predicate; callers must hold
+// s.mu (read or write).
 func (s *Session) budgetExhausted() bool {
 	if s.budget.MaxOutputTokens > 0 && s.usedOutputTokens >= s.budget.MaxOutputTokens {
 		return true

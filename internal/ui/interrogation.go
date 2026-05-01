@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -19,11 +20,27 @@ const (
 	paneTechniques
 )
 
+// pendingAsk is the in-flight ask currently being run by the witness
+// driver. Held in UI state (not Session) so the View can render the
+// player line + typing indicator without touching the session log.
+type pendingAsk struct {
+	topic     string
+	technique kase.Technique
+}
+
+// witnessRespondedMsg is delivered when the async ask completes.
+// game.Session.Ask has already appended the exchange to its log; the
+// UI just needs to clear the pending state.
+type witnessRespondedMsg struct {
+	err error
+}
+
 type interrogationModel struct {
 	session  *game.Session
 	focus    pane
 	topicIdx int
 	techIdx  int
+	pending  *pendingAsk
 	lastErr  string
 }
 
@@ -33,7 +50,7 @@ func newInterrogation(s *game.Session) interrogationModel {
 
 func (m interrogationModel) Init() tea.Cmd { return nil }
 
-// Close releases the session's underlying journal. Safe to call once.
+// Close releases the session's underlying driver. Safe to call once.
 func (m interrogationModel) Close(ctx context.Context) error {
 	if m.session == nil {
 		return nil
@@ -41,9 +58,33 @@ func (m interrogationModel) Close(ctx context.Context) error {
 	return m.session.Close(ctx)
 }
 
+// askCmd dispatches Session.Ask in a goroutine so the TUI loop stays
+// responsive while the LLM is in flight.
+func askCmd(s *game.Session, topic string, technique kase.Technique) tea.Cmd {
+	return func() tea.Msg {
+		_, err := s.Ask(context.Background(), topic, technique)
+		return witnessRespondedMsg{err: err}
+	}
+}
+
 // Update returns (next, cmd, back). back=true asks the parent to leave
 // the interrogation (return to splash for now).
 func (m interrogationModel) Update(msg tea.Msg) (interrogationModel, tea.Cmd, bool) {
+	// Async response from a previous ask.
+	if r, ok := msg.(witnessRespondedMsg); ok {
+		m.pending = nil
+		if r.err != nil {
+			if errors.Is(r.err, game.ErrSessionEnded) {
+				m.lastErr = "the witness leaves"
+			} else {
+				m.lastErr = r.err.Error()
+			}
+		} else {
+			m.lastErr = ""
+		}
+		return m, nil, false
+	}
+
 	k, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil, false
@@ -83,16 +124,14 @@ func (m interrogationModel) Update(msg tea.Msg) (interrogationModel, tea.Cmd, bo
 			}
 		}
 	case "enter":
-		if len(topics) == 0 {
+		if m.pending != nil || len(topics) == 0 || m.session.SessionEnded() {
 			return m, nil, false
 		}
 		topic := topics[m.topicIdx].Name
 		tech := kase.AllTechniques[m.techIdx]
-		if _, err := m.session.Ask(context.Background(), topic, tech); err != nil {
-			m.lastErr = err.Error()
-		} else {
-			m.lastErr = ""
-		}
+		m.pending = &pendingAsk{topic: topic, technique: tech}
+		m.lastErr = ""
+		return m, askCmd(m.session, topic, tech), false
 	}
 	return m, nil, false
 }
@@ -122,7 +161,7 @@ func (m interrogationModel) View() string {
 
 func (m interrogationModel) renderDialogue() string {
 	log := m.session.Log()
-	if len(log) == 0 {
+	if len(log) == 0 && m.pending == nil {
 		return styleMuted.Render("(she's waiting.)")
 	}
 	var b strings.Builder
@@ -132,6 +171,13 @@ func (m interrogationModel) renderDialogue() string {
 		}
 		fmt.Fprintf(&b, "%s\n", styleDim.Render(fmt.Sprintf("> you (%s, %s)", ex.Topic, ex.Technique.Label())))
 		b.WriteString(ex.Witness)
+	}
+	if m.pending != nil {
+		if len(log) > 0 {
+			b.WriteString("\n\n")
+		}
+		fmt.Fprintf(&b, "%s\n", styleDim.Render(fmt.Sprintf("> you (%s, %s)", m.pending.topic, m.pending.technique.Label())))
+		b.WriteString(styleMuted.Render("—"))
 	}
 	return b.String()
 }
