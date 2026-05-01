@@ -1,14 +1,15 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/jerkeyray/hearsay/internal/game"
 	"github.com/jerkeyray/hearsay/internal/kase"
-	"github.com/jerkeyray/hearsay/internal/witness"
 )
 
 type pane int
@@ -18,30 +19,27 @@ const (
 	paneTechniques
 )
 
-type exchange struct {
-	topic     string
-	technique string
-	witness   string
-}
-
 type interrogationModel struct {
-	kase      kase.Case
-	witness   *witness.Agent
-	focus     pane
-	topicIdx  int
-	techIdx   int
-	exchanges []exchange
+	session  *game.Session
+	focus    pane
+	topicIdx int
+	techIdx  int
+	lastErr  string
 }
 
-func newInterrogation(c kase.Case, w *witness.Agent) interrogationModel {
-	return interrogationModel{
-		kase:    c,
-		witness: w,
-		focus:   paneTopics,
-	}
+func newInterrogation(s *game.Session) interrogationModel {
+	return interrogationModel{session: s, focus: paneTopics}
 }
 
 func (m interrogationModel) Init() tea.Cmd { return nil }
+
+// Close releases the session's underlying journal. Safe to call once.
+func (m interrogationModel) Close(ctx context.Context) error {
+	if m.session == nil {
+		return nil
+	}
+	return m.session.Close(ctx)
+}
 
 // Update returns (next, cmd, back). back=true asks the parent to leave
 // the interrogation (return to splash for now).
@@ -50,6 +48,7 @@ func (m interrogationModel) Update(msg tea.Msg) (interrogationModel, tea.Cmd, bo
 	if !ok {
 		return m, nil, false
 	}
+	topics := m.session.Case.Topics
 	switch k.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit, false
@@ -75,7 +74,7 @@ func (m interrogationModel) Update(msg tea.Msg) (interrogationModel, tea.Cmd, bo
 	case "down", "j":
 		switch m.focus {
 		case paneTopics:
-			if m.topicIdx < len(m.kase.Topics)-1 {
+			if m.topicIdx < len(topics)-1 {
 				m.topicIdx++
 			}
 		case paneTechniques:
@@ -84,16 +83,16 @@ func (m interrogationModel) Update(msg tea.Msg) (interrogationModel, tea.Cmd, bo
 			}
 		}
 	case "enter":
-		if len(m.kase.Topics) == 0 {
+		if len(topics) == 0 {
 			return m, nil, false
 		}
-		topic := m.kase.Topics[m.topicIdx].Name
+		topic := topics[m.topicIdx].Name
 		tech := kase.AllTechniques[m.techIdx]
-		m.exchanges = append(m.exchanges, exchange{
-			topic:     topic,
-			technique: tech.Label(),
-			witness:   m.witness.Respond(topic, tech),
-		})
+		if _, err := m.session.Ask(context.Background(), topic, tech); err != nil {
+			m.lastErr = err.Error()
+		} else {
+			m.lastErr = ""
+		}
 	}
 	return m, nil, false
 }
@@ -102,7 +101,7 @@ func (m interrogationModel) View() string {
 	header := lipgloss.JoinHorizontal(
 		lipgloss.Top,
 		styleTitle.Render("hearsay"),
-		styleDim.Render("  ·  "+m.kase.ID),
+		styleDim.Render("  ·  "+m.session.Case.ID),
 	)
 
 	dialogue := m.renderDialogue()
@@ -112,27 +111,32 @@ func (m interrogationModel) View() string {
 	bottom := lipgloss.JoinHorizontal(lipgloss.Top, topics, techs)
 	footer := styleDim.Render("enter ask · ↹ switch panel · esc back · q quit")
 
-	body := lipgloss.JoinVertical(lipgloss.Left, header, "", dialogue, "", bottom, "", footer)
+	parts := []string{header, "", dialogue, "", bottom, "", footer}
+	if m.lastErr != "" {
+		parts = append(parts, styleDim.Render("err: "+m.lastErr))
+	}
+	body := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	return styleBorder.Render(body)
 }
 
 func (m interrogationModel) renderDialogue() string {
-	if len(m.exchanges) == 0 {
+	log := m.session.Log()
+	if len(log) == 0 {
 		return styleMuted.Render("(she's waiting.)")
 	}
 	var b strings.Builder
-	for i, ex := range m.exchanges {
+	for i, ex := range log {
 		if i > 0 {
 			b.WriteString("\n\n")
 		}
-		fmt.Fprintf(&b, "%s\n", styleDim.Render(fmt.Sprintf("> you (%s, %s)", ex.topic, ex.technique)))
-		b.WriteString(ex.witness)
+		fmt.Fprintf(&b, "%s\n", styleDim.Render(fmt.Sprintf("> you (%s, %s)", ex.Topic, ex.Technique.Label())))
+		b.WriteString(ex.Witness)
 	}
 	return b.String()
 }
 
 func (m interrogationModel) renderTopics() string {
-	header := "ASK ABOUT"
+	var header string
 	if m.focus == paneTopics {
 		header = styleSelected.Render("ASK ABOUT")
 	} else {
@@ -141,8 +145,8 @@ func (m interrogationModel) renderTopics() string {
 	var b strings.Builder
 	b.WriteString(header)
 	b.WriteString("\n")
-	for i, t := range m.kase.Topics {
-		line := "  " + t.Name
+	for i, t := range m.session.Case.Topics {
+		var line string
 		if i == m.topicIdx {
 			if m.focus == paneTopics {
 				line = styleSelected.Render("▸ " + t.Name)
