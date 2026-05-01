@@ -26,19 +26,22 @@ const (
 	screenSplash screen = iota
 	screenBriefing
 	screenInterrogation
+	screenReconstruction
 	screenError
 	screenPlaceholder
 )
 
 type model struct {
-	screen        screen
-	splash        splashModel
-	briefing      briefingModel
-	interrogation interrogationModel
-	makeDriver    DriverFactory
-	errMsg        string
-	placeholder   string
-	quitting      bool
+	screen         screen
+	splash         splashModel
+	briefing       briefingModel
+	interrogation  interrogationModel
+	reconstruction reconstructionModel
+	session        *game.Session // active session, nil between cases
+	makeDriver     DriverFactory
+	errMsg         string
+	placeholder    string
+	quitting       bool
 }
 
 // New constructs the root TUI model. makeDriver builds a fresh
@@ -107,6 +110,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.screen = screenError
 				return m, nil
 			}
+			m.session = session
 			m.interrogation = newInterrogation(session)
 			m.screen = screenInterrogation
 			return m, nil
@@ -114,11 +118,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case screenInterrogation:
-		next, cmd, back := m.interrogation.Update(msg)
+		next, cmd, back, done := m.interrogation.Update(msg)
 		m.interrogation = next
+		if done {
+			m.reconstruction = newReconstruction(m.session.Case.Reconstruction)
+			m.screen = screenReconstruction
+			return m, nil
+		}
 		if back {
 			_ = m.interrogation.Close(context.Background())
+			m.session = nil
 			m.screen = screenSplash
+			return m, nil
+		}
+		return m, cmd
+
+	case screenReconstruction:
+		next, cmd, submit, back := m.reconstruction.Update(msg)
+		m.reconstruction = next
+		if submit {
+			m.session.SubmitReconstruction(m.reconstruction.Result())
+			// Verdict screen lands in step 19; for now return to
+			// splash and close the session.
+			_ = m.session.Close(context.Background())
+			m.session = nil
+			m.screen = screenSplash
+			return m, nil
+		}
+		if back {
+			m.screen = screenInterrogation
 			return m, nil
 		}
 		return m, cmd
@@ -159,6 +187,8 @@ func (m model) View() string {
 		return m.briefing.View()
 	case screenInterrogation:
 		return m.interrogation.View()
+	case screenReconstruction:
+		return m.reconstruction.View()
 	case screenError:
 		return styleBorder.Render(
 			styleTitle.Render("hearsay") + "\n\n" +

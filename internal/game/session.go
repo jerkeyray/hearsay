@@ -65,6 +65,8 @@ type Session struct {
 	usedOutputTokens int64
 	usedCostUSD      float64
 	visible          map[string]bool // topic name → visible?
+	ended            bool            // player chose "I'm done" or budget tripped
+	reconstruction   *Reconstruction // set by SubmitReconstruction
 }
 
 // NewSession constructs a session over a case + witness driver and
@@ -92,7 +94,7 @@ func (s *Session) Ask(ctx context.Context, topic string, technique kase.Techniqu
 	// driver call lets the View render the existing log while the LLM
 	// is in flight.
 	s.mu.RLock()
-	if s.budgetExhausted() {
+	if s.ended || s.budgetExhausted() {
 		s.mu.RUnlock()
 		return Exchange{}, ErrSessionEnded
 	}
@@ -158,6 +160,42 @@ func (s *Session) VisibleTopics() []kase.Topic {
 		}
 	}
 	return out
+}
+
+// EndSession marks the player as finished interrogating. Subsequent
+// Ask calls return ErrSessionEnded. Called by the UI when the player
+// presses "I'm done" or when the budget exhausts.
+func (s *Session) EndSession() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ended = true
+}
+
+// IsEnded reports whether the player has stopped interrogating
+// (either explicitly or via budget exhaustion).
+func (s *Session) IsEnded() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.ended || s.budgetExhausted()
+}
+
+// SubmitReconstruction stores the player's reconstruction answers.
+// Returns the stored Reconstruction; safe to call once per session.
+// Subsequent calls overwrite (the player can re-submit if the UI
+// allows it; the verdict screen reads the latest).
+func (s *Session) SubmitReconstruction(r Reconstruction) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := Reconstruction{Answers: append([]Answer(nil), r.Answers...)}
+	s.reconstruction = &c
+}
+
+// Reconstruction returns the submitted reconstruction, or nil if
+// none yet.
+func (s *Session) Reconstruction() *Reconstruction {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.reconstruction
 }
 
 // CurrentDemeanor returns the demeanor recorded on the latest

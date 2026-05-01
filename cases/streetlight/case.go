@@ -80,4 +80,54 @@ Ask carefully. Memory is not a recording.`,
 			Circular: "I just remember the sound.",
 		},
 	},
+	Reconstruction: kase.Form{
+		Questions: []kase.Question{
+			{
+				ID:      "car_color",
+				Prompt:  "What color was the car?",
+				Type:    kase.Radio,
+				Choices: []string{"red", "blue", "green", "black"},
+			},
+			{
+				ID:      "second_person",
+				Prompt:  "Was there a second person at the alley?",
+				Type:    kase.Radio,
+				Choices: []string{"yes", "no"},
+			},
+			{
+				ID:      "streetlight_color",
+				Prompt:  "What color was the streetlight?",
+				Type:    kase.Radio,
+				Choices: []string{"orange", "white", "yellow", "blue"},
+			},
+			{
+				ID:      "bag_contents",
+				Prompt:  "What was in the bag?",
+				Type:    kase.MultiSelect,
+				Choices: []string{"a folder", "a gun", "money", "drugs", "papers", "clothes"},
+			},
+			{
+				ID:     "time",
+				Prompt: "At what time? (free text)",
+				Type:   kase.FreeText,
+			},
+			{
+				ID:      "limp_side",
+				Prompt:  "Which leg did the man limp on?",
+				Type:    kase.Radio,
+				Choices: []string{"left", "right", "neither"},
+			},
+			{
+				ID:      "weather",
+				Prompt:  "Was it raining? (distractor — there is no canonical answer)",
+				Type:    kase.Radio,
+				Choices: []string{"yes", "no"},
+			},
+			{
+				ID:     "passersby",
+				Prompt: "How many people walked past the alley? (distractor)",
+				Type:   kase.FreeText,
+			},
+		},
+	},
 }

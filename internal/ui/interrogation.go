@@ -67,27 +67,29 @@ func askCmd(s *game.Session, topic string, technique kase.Technique) tea.Cmd {
 	}
 }
 
-// Update returns (next, cmd, back). back=true asks the parent to leave
-// the interrogation (return to splash for now).
-func (m interrogationModel) Update(msg tea.Msg) (interrogationModel, tea.Cmd, bool) {
+// Update returns (next, cmd, back, done). back=true returns to
+// splash; done=true transitions to the reconstruction screen.
+func (m interrogationModel) Update(msg tea.Msg) (interrogationModel, tea.Cmd, bool, bool) {
 	// Async response from a previous ask.
 	if r, ok := msg.(witnessRespondedMsg); ok {
 		m.pending = nil
 		if r.err != nil {
 			if errors.Is(r.err, game.ErrSessionEnded) {
 				m.lastErr = "the witness leaves"
-			} else {
-				m.lastErr = r.err.Error()
+				// Budget tripped during this ask: auto-advance to
+				// reconstruction so the player isn't stranded.
+				return m, nil, false, true
 			}
+			m.lastErr = r.err.Error()
 		} else {
 			m.lastErr = ""
 		}
-		return m, nil, false
+		return m, nil, false, false
 	}
 
 	k, ok := msg.(tea.KeyMsg)
 	if !ok {
-		return m, nil, false
+		return m, nil, false, false
 	}
 	topics := m.session.VisibleTopics()
 	if m.topicIdx >= len(topics) && len(topics) > 0 {
@@ -95,15 +97,21 @@ func (m interrogationModel) Update(msg tea.Msg) (interrogationModel, tea.Cmd, bo
 	}
 	switch k.String() {
 	case "q", "ctrl+c":
-		return m, tea.Quit, false
+		return m, tea.Quit, false, false
 	case "esc":
-		return m, nil, true
+		return m, nil, true, false
+	case "d":
+		// Player chose "I'm done" — end the session and transition
+		// to reconstruction. PRD §2.3.
+		m.session.EndSession()
+		return m, nil, false, true
 	case "tab":
 		if m.focus == paneTopics {
 			m.focus = paneTechniques
 		} else {
 			m.focus = paneTopics
 		}
+		return m, nil, false, false
 	case "up", "k":
 		switch m.focus {
 		case paneTopics:
@@ -128,15 +136,15 @@ func (m interrogationModel) Update(msg tea.Msg) (interrogationModel, tea.Cmd, bo
 		}
 	case "enter":
 		if m.pending != nil || len(topics) == 0 || m.session.SessionEnded() {
-			return m, nil, false
+			return m, nil, false, false
 		}
 		topic := topics[m.topicIdx].Name
 		tech := kase.AllTechniques[m.techIdx]
 		m.pending = &pendingAsk{topic: topic, technique: tech}
 		m.lastErr = ""
-		return m, askCmd(m.session, topic, tech), false
+		return m, askCmd(m.session, topic, tech), false, false
 	}
-	return m, nil, false
+	return m, nil, false, false
 }
 
 func (m interrogationModel) View() string {
@@ -154,7 +162,7 @@ func (m interrogationModel) View() string {
 	techs := m.renderTechniques()
 
 	bottom := lipgloss.JoinHorizontal(lipgloss.Top, topics, techs)
-	footer := styleDim.Render("enter ask · ↹ switch panel · esc back · q quit")
+	footer := styleDim.Render("enter ask · ↹ switch panel · d done · esc back · q quit")
 
 	parts := []string{header, demeanor, "", dialogue, "", bottom, "", footer}
 	if m.lastErr != "" {
