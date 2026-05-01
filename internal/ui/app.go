@@ -27,6 +27,7 @@ const (
 	screenBriefing
 	screenInterrogation
 	screenReconstruction
+	screenVerdict
 	screenError
 	screenPlaceholder
 )
@@ -37,6 +38,7 @@ type model struct {
 	briefing       briefingModel
 	interrogation  interrogationModel
 	reconstruction reconstructionModel
+	verdict        verdictModel
 	session        *game.Session // active session, nil between cases
 	makeDriver     DriverFactory
 	errMsg         string
@@ -137,16 +139,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		next, cmd, submit, back := m.reconstruction.Update(msg)
 		m.reconstruction = next
 		if submit {
-			m.session.SubmitReconstruction(m.reconstruction.Result())
-			// Verdict screen lands in step 19; for now return to
-			// splash and close the session.
-			_ = m.session.Close(context.Background())
-			m.session = nil
-			m.screen = screenSplash
+			r := m.reconstruction.Result()
+			m.session.SubmitReconstruction(r)
+			v := game.Score(m.session.Case, m.session.Log(), r)
+			m.verdict = newVerdict(v)
+			m.screen = screenVerdict
 			return m, nil
 		}
 		if back {
 			m.screen = screenInterrogation
+			return m, nil
+		}
+		return m, cmd
+
+	case screenVerdict:
+		next, cmd, done := m.verdict.Update(msg)
+		m.verdict = next
+		if done {
+			_ = m.session.Close(context.Background())
+			m.session = nil
+			m.screen = screenSplash
 			return m, nil
 		}
 		return m, cmd
@@ -189,6 +201,8 @@ func (m model) View() string {
 		return m.interrogation.View()
 	case screenReconstruction:
 		return m.reconstruction.View()
+	case screenVerdict:
+		return m.verdict.View()
 	case screenError:
 		return styleBorder.Render(
 			styleTitle.Render("hearsay") + "\n\n" +

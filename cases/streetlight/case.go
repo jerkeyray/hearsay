@@ -130,4 +130,16 @@ Ask carefully. Memory is not a recording.`,
 			},
 		},
 	},
+	Rubric: kase.Rubric{
+		Items: map[string]kase.RubricItem{
+			"car_color":         {Truth: "blue", WitnessTopic: "the car"},
+			"second_person":     {Truth: "no", WitnessTopic: "the second person"},
+			"streetlight_color": {Truth: "orange", WitnessTopic: "the streetlight"},
+			"bag_contents":      {TruthSet: []string{"a folder", "a gun"}, WitnessTopic: "the bag"},
+			"time":              {Truth: "11:47", WitnessTopic: "the time"},
+			"limp_side":         {Truth: "left", WitnessTopic: "the limp"},
+			"weather":           {Distractor: true},
+			"passersby":         {Distractor: true},
+		},
+	},
 }
