@@ -64,6 +64,7 @@ type Session struct {
 	budget           Budget
 	usedOutputTokens int64
 	usedCostUSD      float64
+	visible          map[string]bool // topic name → visible?
 }
 
 // NewSession constructs a session over a case + witness driver and
@@ -73,7 +74,13 @@ func NewSession(_ context.Context, c kase.Case, d witness.Driver, b Budget) (*Se
 	if b.MaxOutputTokens == 0 && b.MaxUSD == 0 {
 		b = DefaultBudget
 	}
-	return &Session{Case: c, driver: d, budget: b}, nil
+	visible := make(map[string]bool, len(c.Topics))
+	for _, t := range c.Topics {
+		if t.InitiallyVisible {
+			visible[t.Name] = true
+		}
+	}
+	return &Session{Case: c, driver: d, budget: b, visible: visible}, nil
 }
 
 // Ask runs one turn: build conversation history, invoke the driver,
@@ -118,7 +125,39 @@ func (s *Session) Ask(ctx context.Context, topic string, technique kase.Techniqu
 		CostUSD:      resp.CostUSD,
 	}
 	s.log = append(s.log, ex)
+	s.applySurfacingLocked(topic, technique)
 	return ex, nil
+}
+
+// applySurfacingLocked walks the just-asked topic's Surfaces rules
+// and marks any matching target topic visible. Caller holds s.mu.Lock.
+func (s *Session) applySurfacingLocked(asked string, technique kase.Technique) {
+	for _, t := range s.Case.Topics {
+		if t.Name != asked {
+			continue
+		}
+		for _, rule := range t.Surfaces {
+			if rule.Technique == technique {
+				s.visible[rule.Topic] = true
+			}
+		}
+		return
+	}
+}
+
+// VisibleTopics returns the topics currently visible to the player,
+// in the case's declaration order. Hidden topics are filtered out.
+// Safe to call concurrently with Ask.
+func (s *Session) VisibleTopics() []kase.Topic {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]kase.Topic, 0, len(s.Case.Topics))
+	for _, t := range s.Case.Topics {
+		if s.visible[t.Name] {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // CurrentDemeanor returns the demeanor recorded on the latest

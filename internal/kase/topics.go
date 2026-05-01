@@ -49,9 +49,27 @@ func ParseTechnique(label string) (Technique, bool) {
 	return 0, false
 }
 
-// Topic is a node in the case's topic graph (PRD §3.2). Surfacing rules
-// land in M3; for M1 the list is fully visible from the start.
+// Topic is a node in the case's topic graph (PRD §3.2). Topics with
+// InitiallyVisible=false start hidden and only surface when one of
+// the case's Surfaces rules fires from another topic.
 type Topic struct {
 	Name             string
 	InitiallyVisible bool
+	// Surfaces lists "asking THIS topic with that technique surfaces
+	// the named topic." Order does not matter; rules are evaluated
+	// after each turn and idempotent (re-firing has no effect).
+	Surfaces []SurfaceRule
+}
+
+// SurfaceRule says: when the just-completed turn asked the parent
+// topic using Technique, mark Topic visible. PRD §3.2 / §5.3.
+//
+// To surface one topic from multiple techniques, add multiple rules
+// with the same Topic and different Technique values. To surface from
+// any technique, list one rule per technique in AllTechniques.
+type SurfaceRule struct {
+	// Topic is the name of the topic to make visible.
+	Topic string
+	// Technique that triggers the rule.
+	Technique Technique
 }

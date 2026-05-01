@@ -89,7 +89,10 @@ func (m interrogationModel) Update(msg tea.Msg) (interrogationModel, tea.Cmd, bo
 	if !ok {
 		return m, nil, false
 	}
-	topics := m.session.Case.Topics
+	topics := m.session.VisibleTopics()
+	if m.topicIdx >= len(topics) && len(topics) > 0 {
+		m.topicIdx = len(topics) - 1
+	}
 	switch k.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit, false
@@ -194,7 +197,7 @@ func (m interrogationModel) renderTopics() string {
 	var b strings.Builder
 	b.WriteString(header)
 	b.WriteString("\n")
-	for i, t := range m.session.Case.Topics {
+	for i, t := range m.session.VisibleTopics() {
 		var line string
 		if i == m.topicIdx {
 			if m.focus == paneTopics {

@@ -20,9 +20,16 @@ Ask carefully. Memory is not a recording.`,
 		{Name: "the car", InitiallyVisible: true},
 		{Name: "the second person", InitiallyVisible: true},
 		{Name: "the streetlight", InitiallyVisible: true},
-		{Name: "the bag", InitiallyVisible: true},
+		{Name: "the bag", InitiallyVisible: true,
+			// Asking about the bag with "the moment before" surfaces the
+			// hidden "what happened before" topic — PRD §3.2 example.
+			Surfaces: []kase.SurfaceRule{
+				{Topic: "what happened before", Technique: kase.MomentBefore},
+			},
+		},
 		{Name: "the time", InitiallyVisible: true},
 		{Name: "the limp", InitiallyVisible: true},
+		{Name: "what happened before", InitiallyVisible: false},
 	},
 	Beliefs: map[string]kase.Belief{
 		"the streetlight": {
@@ -62,6 +69,15 @@ Ask carefully. Memory is not a recording.`,
 			Kind:   kase.Suppressed,
 			Bounce: "I didn't really see what was in it.",
 			Gist:   "I think I heard something heavy.",
+		},
+		"what happened before": {
+			Kind: kase.Confabulated,
+			Drift: []string{
+				"footsteps. quick ones.",
+				"a car door, I think.",
+				"someone arguing. far off.",
+			},
+			Circular: "I just remember the sound.",
 		},
 	},
 }
