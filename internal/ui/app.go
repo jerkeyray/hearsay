@@ -4,6 +4,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/jerkeyray/hearsay/cases/streetlight"
+	"github.com/jerkeyray/hearsay/internal/witness"
 )
 
 type screen int
@@ -20,12 +21,17 @@ type model struct {
 	splash        splashModel
 	briefing      briefingModel
 	interrogation interrogationModel
+	witness       *witness.Agent
 	placeholder   string
 	quitting      bool
 }
 
 func New() tea.Model {
-	return model{screen: screenSplash, splash: newSplash()}
+	return model{
+		screen:  screenSplash,
+		splash:  newSplash(),
+		witness: witness.New(),
+	}
 }
 
 func (m model) Init() tea.Cmd { return nil }
@@ -59,7 +65,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if advance {
-			m.interrogation = newInterrogation(streetlight.Case)
+			m.interrogation = newInterrogation(streetlight.Case, m.witness)
 			m.screen = screenInterrogation
 			return m, nil
 		}

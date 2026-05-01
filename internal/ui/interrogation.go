@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/jerkeyray/hearsay/internal/kase"
+	"github.com/jerkeyray/hearsay/internal/witness"
 )
 
 type pane int
@@ -24,17 +25,19 @@ type exchange struct {
 }
 
 type interrogationModel struct {
-	kase       kase.Case
-	focus      pane
-	topicIdx   int
-	techIdx    int
-	exchanges  []exchange
+	kase      kase.Case
+	witness   *witness.Agent
+	focus     pane
+	topicIdx  int
+	techIdx   int
+	exchanges []exchange
 }
 
-func newInterrogation(c kase.Case) interrogationModel {
+func newInterrogation(c kase.Case, w *witness.Agent) interrogationModel {
 	return interrogationModel{
-		kase:  c,
-		focus: paneTopics,
+		kase:    c,
+		witness: w,
+		focus:   paneTopics,
 	}
 }
 
@@ -85,11 +88,11 @@ func (m interrogationModel) Update(msg tea.Msg) (interrogationModel, tea.Cmd, bo
 			return m, nil, false
 		}
 		topic := m.kase.Topics[m.topicIdx].Name
-		tech := kase.AllTechniques[m.techIdx].Label()
+		tech := kase.AllTechniques[m.techIdx]
 		m.exchanges = append(m.exchanges, exchange{
 			topic:     topic,
-			technique: tech,
-			witness:   "she pauses.",
+			technique: tech.Label(),
+			witness:   m.witness.Respond(topic, tech),
 		})
 	}
 	return m, nil, false
