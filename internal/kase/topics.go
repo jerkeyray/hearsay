@@ -37,6 +37,18 @@ var AllTechniques = []Technique{
 	CircleBackLater,
 }
 
+// ParseTechnique returns the Technique with the given Label, or
+// (0, false) if no match. Used to validate the technique string the
+// LLM passes to the recall tool.
+func ParseTechnique(label string) (Technique, bool) {
+	for _, t := range AllTechniques {
+		if t.Label() == label {
+			return t, true
+		}
+	}
+	return 0, false
+}
+
 // Topic is a node in the case's topic graph (PRD §3.2). Surfacing rules
 // land in M3; for M1 the list is fully visible from the start.
 type Topic struct {
