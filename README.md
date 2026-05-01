@@ -93,18 +93,31 @@ expect it to evolve from playtests. The five providers Starling supports
 work in principle; the dryness register has been tuned against Anthropic
 Sonnet 4.6 and may need per-provider adjustments elsewhere.
 
-## Releasing
+## Layout for development
+
+`go.mod` has `replace github.com/jerkeyray/starling => ../starling` for
+co-development. Clone the repos as siblings:
+
+```
+code/
+├── hearsay/
+└── starling/
+```
 
 CI (`.github/workflows/ci.yml`) and release (`.github/workflows/release.yml`)
-assume Starling is publicly resolvable as a Go module. The current `go.mod`
-uses a local `replace` directive pointing at `/Users/jerkeyray/code/starling`
-during co-development. Before the first tagged release:
+mirror this — both check out `jerkeyray/hearsay` and `jerkeyray/starling`
+into sibling directories on the runner so the `replace` resolves.
 
-1. Tag a Starling version and push it.
-2. Drop the `replace` line from `go.mod` and pin a normal `require` against
-   the tagged version.
-3. Tag this repo (`git tag v0.1.0 && git push --tags`); release workflow
-   builds and uploads binaries for the five target platforms.
+## Releasing
+
+1. Tag this repo: `git tag v0.1.0 && git push --tags`.
+2. The release workflow builds and uploads binaries for darwin/arm64,
+   darwin/amd64, linux/amd64, linux/arm64, windows/amd64.
+
+For `go install github.com/jerkeyray/hearsay/cmd/hearsay@latest` to work
+for end users (not just sibling-checkout developers), Starling must also
+be tagged and the `replace` line must be removed from `go.mod` in favor
+of a normal `require` against the tagged Starling version.
 
 ## License
 

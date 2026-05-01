@@ -32,12 +32,24 @@ jobs:
             runner: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      # See ci.yml for context on the sibling-checkout pattern.
+      - name: checkout hearsay
+        uses: actions/checkout@v4
+        with:
+          path: hearsay
+
+      - name: checkout starling
+        uses: actions/checkout@v4
+        with:
+          repository: jerkeyray/starling
+          path: starling
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.x'
 
       - name: build binary
+        working-directory: hearsay
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -54,7 +66,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARTIFACT }}
-          path: ${{ env.ARTIFACT }}
+          path: hearsay/${{ env.ARTIFACT }}
 
   release:
     needs: build
